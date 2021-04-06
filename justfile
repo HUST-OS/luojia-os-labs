@@ -14,7 +14,7 @@ size := "rust-size"
 threads := "1"
 
 build:
-    @just -f "batch-kernel/justfile" build
+    @just -f "01-batch-kernel/justfile" build
 
 qemu: build
     @qemu-system-riscv64 \

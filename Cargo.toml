@@ -1,4 +1,5 @@
 [workspace]
 members = [
-    "batch-kernel"
+    "00-template-kernel",
+    "01-batch-kernel",
 ]

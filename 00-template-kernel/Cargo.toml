@@ -1,0 +1,10 @@
+[package]
+name = "template-kernel"
+version = "0.1.0"
+authors = ["luojia65 <me@luojia.cc>"]
+edition = "2018"
+
+# See more keys and their definitions at https://doc.rust-lang.org/cargo/reference/manifest.html
+
+[dependencies]
+r0 = "1"
