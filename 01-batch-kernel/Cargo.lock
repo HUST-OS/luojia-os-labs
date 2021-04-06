@@ -10,20 +10,13 @@ dependencies = [
 ]
 
 [[package]]
-name = "batch-kernel-user"
-version = "0.1.0"
-dependencies = [
- "r0",
-]
-
-[[package]]
 name = "r0"
 version = "1.0.0"
 source = "registry+https://github.com/rust-lang/crates.io-index"
 checksum = "bd7a31eed1591dcbc95d92ad7161908e72f4677f8fabf2a32ca49b4237cbf211"
 
 [[package]]
-name = "template-kernel"
+name = "user"
 version = "0.1.0"
 dependencies = [
  "r0",

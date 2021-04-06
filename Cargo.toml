@@ -1,5 +1,12 @@
 [workspace]
 members = [
     "00-template-kernel",
-    "01-batch-kernel",
+    "01-batch-kernel/kernel",
+    "01-batch-kernel/user",
 ]
+
+[profile.dev]
+panic = "abort"
+
+[profile.release]
+panic = "abort"
