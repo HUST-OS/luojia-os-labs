@@ -1,2 +1,30 @@
-build:
+target := "riscv64imac-unknown-none-elf"
+mode := "debug"
+build-path := "../target/" + target + "/" + mode + "/"
+bootloader-bin := "../../rustsbi/target/" + target + "/debug/rustsbi-qemu.bin"
+kernel-bin := build-path + "batch-kernel.bin"
+
+threads := "1"
+set shell := ["powershell.exe", "-c"]
+
+build: kernel
+    ./GenerateUserApps.ps1
+
+kernel:
     @just -f "kernel/justfile" build
+
+asm app:
+    @just -f "user/justfile" asm {{app}}
+
+size app:
+    @just -f "user/justfile" size {{app}}
+
+qemu app: build
+    @qemu-system-riscv64 \
+            -machine virt \
+            -nographic \
+            -bios none \
+            -device loader,file={{bootloader-bin}},addr=0x80000000 \
+            -device loader,file={{kernel-bin}},addr=0x80200000 \
+            -device loader,file={{build-path}}/{{app}}.bin,addr=0x80400000 \
+            -smp threads={{threads}}

@@ -10,7 +10,7 @@ build app: (elf app)
     @{{objcopy}} {{build-path}}/{{app}} --strip-all -O binary {{build-path}}/{{app}}.bin
 
 elf app:
-    @cargo build --target={{target}} --bin {{app}}
+    @cargo build --target {{target}} --bin {{app}} 
 
 asm app: (elf app)
     @{{objdump}} -D {{build-path}}/{{app}} | less
