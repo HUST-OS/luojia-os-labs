@@ -136,3 +136,19 @@ version = "0.1.0"
 dependencies = [
  "r0",
 ]
+
+[[package]]
+name = "yield-batch-kernel"
+version = "0.1.0"
+dependencies = [
+ "lazy_static",
+ "r0",
+ "riscv",
+]
+
+[[package]]
+name = "yield-batch-kernel-user"
+version = "0.1.0"
+dependencies = [
+ "r0",
+]

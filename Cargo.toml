@@ -3,6 +3,8 @@ members = [
     "00-template-kernel",
     "01-batch-kernel/kernel",
     "01-batch-kernel/user",
+    "01a-yield-batch-kern/kernel",
+    "01a-yield-batch-kern/user",
 ]
 
 [profile.dev]

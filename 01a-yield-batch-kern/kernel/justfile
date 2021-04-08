@@ -1,0 +1,21 @@
+target := "riscv64imac-unknown-none-elf"
+mode := "debug"
+build-path := "../../target/" + target + "/" + mode + "/"
+batch-kernel-elf := build-path + "batch-kernel"
+batch-kernel-bin := build-path + "batch-kernel.bin"
+
+objdump := "riscv64-unknown-elf-objdump"
+objcopy := "rust-objcopy --binary-architecture=riscv64"
+size := "rust-size"
+
+build: firmware
+    @{{objcopy}} {{batch-kernel-elf}} --strip-all -O binary {{batch-kernel-bin}}
+
+firmware:
+    @cargo build --target={{target}}
+
+asm: build
+    @{{objdump}} -D {{batch-kernel-elf}} | less
+
+size: build
+    @{{size}} -A -x {{batch-kernel-elf}} 
