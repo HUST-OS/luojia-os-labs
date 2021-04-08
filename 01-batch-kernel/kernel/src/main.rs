@@ -6,6 +6,9 @@
 #[macro_use]
 mod console;
 mod sbi;
+mod app;
+mod trap;
+mod syscall;
 
 use core::panic::PanicInfo;
 
@@ -20,8 +23,9 @@ pub extern "C" fn rust_main(hartid: usize, dtb_pa: usize) -> ! {
     println!(".rodata [{:#x}, {:#x})", srodata as usize, erodata as usize);
     println!(".data [{:#x}, {:#x})", sdata as usize, edata as usize);
     println!(".bss [{:#x}, {:#x})", sbss as usize, ebss as usize);
-    println!("Shutdown machine!");
-    sbi::shutdown()
+    trap::init();
+    app::APP_MANAGER.print_app_info();
+    app::APP_MANAGER.run_next_app()
 }
 
 #[cfg_attr(not(test), panic_handler)]
@@ -68,4 +72,5 @@ unsafe extern "C" fn entry() -> ! {
     options(noreturn))
 }
 
+#[cfg(not(test))]
 global_asm!(include_str!("link_app.S"));

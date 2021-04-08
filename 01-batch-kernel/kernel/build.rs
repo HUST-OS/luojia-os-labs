@@ -16,8 +16,8 @@ fn main() {
     println!("cargo:rustc-link-search={}", out_dir.display());
 
     println!("cargo:rerun-if-changed=../user/src/");
-    let target_dir = out_dir.parent().unwrap().parent().unwrap().parent().unwrap()
-        .to_string_lossy().replace("\\", "\\\\"); // 转义
+    let target_dir = "target/riscv64imac-unknown-none-elf/debug/";
+        // .to_string_lossy().replace("\\", "\\\\"); // 转义
     insert_app_data(&target_dir).unwrap();
 }
 
