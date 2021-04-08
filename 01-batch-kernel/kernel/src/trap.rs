@@ -79,7 +79,7 @@ extern "C" fn rust_trap_handler(ctx: &mut TrapContext) -> *mut TrapContext {
                 SyscallOperation::UserPanic(file, line, col, msg) => {
                     let file = file.unwrap_or("<no file>");
                     let msg = msg.unwrap_or("<no message>");
-                    println!("[Kernel] User process panicked at {}:{}, {}: {}!", line, col, file, msg);
+                    println!("[Kernel] User process panicked at '{}', {}:{}:{}", msg, file, line, col);
                     crate::app::APP_MANAGER.run_next_app();
                 }
             }
