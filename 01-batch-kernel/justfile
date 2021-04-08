@@ -6,6 +6,11 @@ kernel-bin := build-path + "batch-kernel.bin"
 
 threads := "1"
 set shell := ["powershell.exe", "-c"]
+
+run: kernel qemu
+
+build app:
+    @just -f "user/justfile" build {{app}}
     
 kernel:
     @just -f "kernel/justfile" build
@@ -16,12 +21,11 @@ asm app:
 size app:
     @just -f "user/justfile" size {{app}}
 
-qemu app:
+qemu:
     @qemu-system-riscv64 \
             -machine virt \
             -nographic \
             -bios none \
             -device loader,file={{bootloader-bin}},addr=0x80000000 \
             -device loader,file={{kernel-bin}},addr=0x80200000 \
-            -device loader,file={{build-path}}/{{app}}.bin,addr=0x80400000 \
             -smp threads={{threads}}
