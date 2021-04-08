@@ -3,7 +3,7 @@ use riscv::register::{
     stvec::{self, TrapMode},
     scause::{self, Trap, Exception}, stval,
 };
-use crate::syscall::{syscall, SyscallOperation};
+use crate::syscall::{syscall, SyscallOperation, fast_syscall};
 
 pub fn init() {
     let mut addr = trap_entry as usize;
@@ -101,6 +101,7 @@ extern "C" fn rust_trap_handler(ctx: &mut TrapContext) -> *mut TrapContext {
 }
 
 #[repr(C)]
+#[derive(Debug)]
 pub struct FastContext {
     pub a0: usize,
     pub a1: usize,
@@ -111,8 +112,9 @@ pub struct FastContext {
     pub a6: usize,
 }
 
-extern "C" fn rust_fast_syscall() -> *mut TrapContext {
-    todo!()
+extern "C" fn rust_fast_syscall(ctx: &FastContext) -> *mut TrapContext {
+    fast_syscall(ctx.a6, [ctx.a0, ctx.a1, ctx.a2, ctx.a3, ctx.a4, ctx.a5]);
+    crate::app::APP_MANAGER.run_next_app();
 }
 
 #[naked]

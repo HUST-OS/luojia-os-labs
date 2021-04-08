@@ -5,6 +5,8 @@ const FUNCTION_PROCESS_PANIC: usize = 0x11451419;
 const MODULE_TEST_INTERFACE: usize = 0x233666;
 const FUNCTION_TEST_WRITE: usize = 0x666233;
 
+const FUNCTION_FAST_EXIT: usize = 0x11451;
+
 pub enum SyscallOperation {
     Return(SyscallResult),
     Terminate(i32),
@@ -61,6 +63,16 @@ fn do_test_interface(function: usize, args: [usize; 3]) -> SyscallOperation {
                 panic!("Unsupported fd {}", fd);
             }
         },
-        _ => panic!("Unknown syscall TEST_INTERFACE,function: {}, arg: {:?}", function, args),
+        _ => panic!("Unknown syscall TEST_INTERFACE, function: {}, args: {:?}", function, args),
+    }
+}
+
+pub fn fast_syscall(function: usize, args: [usize; 6]) {
+    match function {
+        FUNCTION_FAST_EXIT => {
+            let code = args[0] as i32;
+            println!("[kernel] Process exited with code {} (fast exit).", code);
+        },
+        _ => panic!("Unknown fast syscall: function: {}, args: {:?}", function, args),
     }
 }

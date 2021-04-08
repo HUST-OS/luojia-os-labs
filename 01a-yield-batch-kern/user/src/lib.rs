@@ -70,15 +70,18 @@ fn main() -> i32 {
 use syscall::*;
 
 pub fn write(fd: usize, buf: &[u8]) -> SyscallResult { sys_write(fd, buf) }
-pub fn exit(exit_code: i32) -> SyscallResult { sys_exit(exit_code) }
+pub fn exit(exit_code: i32) -> SyscallResult { sys_fast_exit(exit_code) }
 
 mod syscall {
     const MODULE_PROCESS: usize = 0x114514;
-    const FUNCTION_PROCESS_EXIT: usize = 0x1919810;
+    // const FUNCTION_PROCESS_EXIT: usize = 0x1919810;
     const FUNCTION_PROCESS_PANIC: usize = 0x11451419;
 
     const MODULE_TEST_INTERFACE: usize = 0x233666;
     const FUNCTION_TEST_WRITE: usize = 0x666233;
+
+    const MODULE_FAST: usize = 0;
+    const FUNCTION_FAST_EXIT: usize = 0x11451;
 
     pub struct SyscallResult {
         pub code: usize,
@@ -153,8 +156,12 @@ mod syscall {
         syscall_3(MODULE_TEST_INTERFACE, FUNCTION_TEST_WRITE, [fd, buffer.as_ptr() as usize, buffer.len()])
     }
 
-    pub fn sys_exit(exit_code: i32) -> SyscallResult {
-        syscall_1(MODULE_PROCESS, FUNCTION_PROCESS_EXIT, exit_code as usize)
+    // pub fn sys_exit(exit_code: i32) -> SyscallResult {
+    //     syscall_1(MODULE_PROCESS, FUNCTION_PROCESS_EXIT, exit_code as usize)
+    // }
+
+    pub fn sys_fast_exit(exit_code: i32) -> SyscallResult {
+        syscall_1(MODULE_FAST, FUNCTION_FAST_EXIT, exit_code as usize)
     }
 
     pub fn sys_panic(file_name: Option<&str>, line: u32, col: u32, msg: Option<&str>) -> SyscallResult {

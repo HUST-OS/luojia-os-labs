@@ -1,8 +1,8 @@
 target := "riscv64imac-unknown-none-elf"
 mode := "debug"
 build-path := "../../target/" + target + "/" + mode + "/"
-batch-kernel-elf := build-path + "batch-kernel"
-batch-kernel-bin := build-path + "batch-kernel.bin"
+batch-kernel-elf := build-path + "yield-batch-kernel"
+batch-kernel-bin := build-path + "yield-batch-kernel.bin"
 
 objdump := "riscv64-unknown-elf-objdump"
 objcopy := "rust-objcopy --binary-architecture=riscv64"
