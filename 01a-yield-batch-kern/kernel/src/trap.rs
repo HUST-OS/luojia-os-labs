@@ -100,20 +100,8 @@ extern "C" fn rust_trap_handler(ctx: &mut TrapContext) -> *mut TrapContext {
     ctx
 }
 
-#[repr(C)]
-#[derive(Debug)]
-pub struct FastContext {
-    pub a0: usize,
-    pub a1: usize,
-    pub a2: usize,
-    pub a3: usize,
-    pub a4: usize,
-    pub a5: usize,
-    pub a6: usize,
-}
-
-extern "C" fn rust_fast_syscall(ctx: &FastContext) -> ! {
-    fast_syscall(ctx.a6, [ctx.a0, ctx.a1, ctx.a2, ctx.a3, ctx.a4, ctx.a5]);
+extern "C" fn rust_fast_syscall(a0: usize, a1: usize, a2: usize, a3: usize, a4: usize, a5: usize, a6: usize) -> ! {
+    fast_syscall(a6, [a0, a1, a2, a3, a4, a5]);
     crate::app::APP_MANAGER.run_next_app()
 }
 
@@ -175,16 +163,7 @@ pub unsafe extern "C" fn trap_entry() -> ! {
         "csrr   a7, scause", // 此时恰好a7的值已经使用过了
         "addi   a7, a7, -8
         bnez    a7, 1f",
-        "addi   sp, sp, -7*8",
-        "sd     a0, 0*8(sp)
-        sd      a1, 1*8(sp)
-        sd      a2, 2*8(sp)
-        sd      a3, 3*8(sp)
-        sd      a4, 4*8(sp)
-        sd      a5, 5*8(sp)
-        sd      a6, 6*8(sp)",
-        "mv     a0, sp",
-        "call   {fast_syscall}",
+        "call   {fast_syscall}", // a0-a6未被更改，恰为该函数的参数
         "unimp", // 非法指令。fast_syscall函数不可能返回，应当使用其它恢复上下文的函数
         "1:", // 需要保存上下文
         "addi   sp, sp, -33*8",
