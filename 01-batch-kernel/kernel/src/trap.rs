@@ -15,23 +15,49 @@ pub fn init() {
 
 #[repr(C)]
 pub struct TrapContext {
-    pub x: [usize; 31],
+    pub ra: usize,
+    pub sp: usize,
+    pub gp: usize,
+    pub tp: usize,
+    pub t0: usize,
+    pub t1: usize,
+    pub t2: usize,
+    pub s0: usize,
+    pub s1: usize,
+    pub a0: usize,
+    pub a1: usize,
+    pub a2: usize,
+    pub a3: usize,
+    pub a4: usize,
+    pub a5: usize,
+    pub a6: usize,
+    pub a7: usize,
+    pub s2: usize,
+    pub s3: usize,
+    pub s4: usize,
+    pub s5: usize,
+    pub s6: usize,
+    pub s7: usize,
+    pub s8: usize,
+    pub s9: usize,
+    pub s10: usize,
+    pub s11: usize,
+    pub t3: usize,
+    pub t4: usize,
+    pub t5: usize,
+    pub t6: usize,
     pub sstatus: Sstatus,
     pub sepc: usize,
 }
 
 impl TrapContext {
-    pub fn set_sp(&mut self, sp: usize) { self.x[1] = sp; }
     pub fn app_init_context(entry: usize, sp: usize) -> Self {
         unsafe { sstatus::set_spp(SPP::User) };
-        let sstatus = sstatus::read();
-        let mut cx = Self {
-            x: [0; 31],
-            sstatus,
-            sepc: entry,
-        };
-        cx.set_sp(sp);
-        cx
+        let mut ctx: TrapContext = unsafe { core::mem::MaybeUninit::uninit().assume_init() };
+        ctx.sstatus = sstatus::read();
+        ctx.sepc = entry;
+        ctx.sp = sp;
+        ctx
     }
 }
 
@@ -40,12 +66,10 @@ extern "C" fn rust_trap_handler(ctx: &mut TrapContext) -> *mut TrapContext {
     let stval = stval::read();
     match scause.cause() {
         Trap::Exception(Exception::UserEnvCall) => {
-            let (a0, a1, a2, a3, a4, a5, a6, a7) = 
-                &mut (ctx.x[9], ctx.x[10], ctx.x[11], ctx.x[12], ctx.x[13], ctx.x[14], ctx.x[15], ctx.x[16]);
-            match syscall(*a7, *a6, [*a0, *a1, *a2, *a3, *a4, *a5]) {
+            match syscall(ctx.a7, ctx.a6, [ctx.a0, ctx.a1, ctx.a2, ctx.a3, ctx.a4, ctx.a5]) {
                 SyscallOperation::Return(ans) => {
-                    *a0 = ans.code;
-                    *a1 = ans.extra;
+                    ctx.a0 = ans.code;
+                    ctx.a1 = ans.extra;
                     ctx.sepc = ctx.sepc.wrapping_add(4);
                 }
                 SyscallOperation::Terminate(code) => {
