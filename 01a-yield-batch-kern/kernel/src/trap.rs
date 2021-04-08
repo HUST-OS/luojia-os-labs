@@ -112,9 +112,9 @@ pub struct FastContext {
     pub a6: usize,
 }
 
-extern "C" fn rust_fast_syscall(ctx: &FastContext) -> *mut TrapContext {
+extern "C" fn rust_fast_syscall(ctx: &FastContext) -> ! {
     fast_syscall(ctx.a6, [ctx.a0, ctx.a1, ctx.a2, ctx.a3, ctx.a4, ctx.a5]);
-    crate::app::APP_MANAGER.run_next_app();
+    crate::app::APP_MANAGER.run_next_app()
 }
 
 #[naked]
@@ -185,7 +185,7 @@ pub unsafe extern "C" fn trap_entry() -> ! {
         sd      a6, 6*8(sp)",
         "mv     a0, sp",
         "call   {fast_syscall}",
-        "j      2f", // 跳转到恢复上下文
+        "unimp", // 非法指令。fast_syscall函数不可能返回，应当使用其它恢复上下文的函数
         "1:", // 需要保存上下文
         "addi   sp, sp, -33*8",
         "sd     x1, 0*8(sp)
