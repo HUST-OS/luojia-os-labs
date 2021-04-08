@@ -1,4 +1,4 @@
-#![feature(naked_functions, asm)]
+#![feature(naked_functions, asm, global_asm)]
 #![feature(panic_info_message)]
 #![no_std]
 #![no_main]
@@ -67,3 +67,5 @@ unsafe extern "C" fn entry() -> ! {
     rust_main = sym rust_main,
     options(noreturn))
 }
+
+global_asm!(include_str!("link_app.S"));

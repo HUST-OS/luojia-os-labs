@@ -6,10 +6,7 @@ kernel-bin := build-path + "batch-kernel.bin"
 
 threads := "1"
 set shell := ["powershell.exe", "-c"]
-
-build: kernel
-    ./GenerateUserApps.ps1
-
+    
 kernel:
     @just -f "kernel/justfile" build
 
@@ -19,7 +16,7 @@ asm app:
 size app:
     @just -f "user/justfile" size {{app}}
 
-qemu app: build
+qemu app:
     @qemu-system-riscv64 \
             -machine virt \
             -nographic \
