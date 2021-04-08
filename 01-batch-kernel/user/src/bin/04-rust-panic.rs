@@ -7,6 +7,6 @@ extern crate batch_kernel_user;
 
 #[no_mangle]
 fn main() -> i32 {
-    println!("Hello, world!");
-    0
+    println!("This program will panic!");
+    panic!("User program triggered panic")
 }

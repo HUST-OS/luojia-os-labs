@@ -7,6 +7,7 @@ extern crate batch_kernel_user;
 
 #[no_mangle]
 fn main() -> i32 {
-    println!("Hello, world!");
+    println!("Triggering illegal instruction!");
+    unsafe { asm!("sret") }; // illegal
     0
 }

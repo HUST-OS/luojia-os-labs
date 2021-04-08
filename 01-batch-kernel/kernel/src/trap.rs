@@ -3,6 +3,7 @@ use riscv::register::{
     stvec::{self, TrapMode},
     scause::{self, Trap, Exception}, stval,
 };
+use crate::syscall::{syscall, SyscallOperation};
 
 pub fn init() {
     let mut addr = trap_entry as usize;
@@ -37,11 +38,27 @@ impl TrapContext {
 extern "C" fn rust_trap_handler(ctx: &mut TrapContext) -> *mut TrapContext {
     let scause = scause::read();
     let stval = stval::read();
-    // println!("scause: {:?}, stval: {:?}, sepc: {:x}", scause.cause(), stval, ctx.sepc);
     match scause.cause() {
         Trap::Exception(Exception::UserEnvCall) => {
-            ctx.x[10] = syscall(ctx.x[17], [ctx.x[10], ctx.x[11], ctx.x[12]]) as usize;
-            ctx.sepc = ctx.sepc.wrapping_add(4);
+            let (a0, a1, a2, a3, a4, a5, a6, a7) = 
+                &mut (ctx.x[9], ctx.x[10], ctx.x[11], ctx.x[12], ctx.x[13], ctx.x[14], ctx.x[15], ctx.x[16]);
+            match syscall(*a7, *a6, [*a0, *a1, *a2, *a3, *a4, *a5]) {
+                SyscallOperation::Return(ans) => {
+                    *a0 = ans.code;
+                    *a1 = ans.extra;
+                    ctx.sepc = ctx.sepc.wrapping_add(4);
+                }
+                SyscallOperation::Terminate(code) => {
+                    println!("[Kernel] Process returned with code {}", code);
+                    crate::app::APP_MANAGER.run_next_app();
+                }
+                SyscallOperation::UserPanic(file, line, col, msg) => {
+                    let file = file.unwrap_or("<no file>");
+                    let msg = msg.unwrap_or("<no message>");
+                    println!("[Kernel] User process panicked at {}:{}, {}: {}!", line, col, file, msg);
+                    crate::app::APP_MANAGER.run_next_app();
+                }
+            }
         }
         Trap::Exception(Exception::StoreFault) |
         Trap::Exception(Exception::StorePageFault) => {

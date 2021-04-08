@@ -99,7 +99,8 @@ struct AppManagerInner {
 impl AppManagerInner {
     unsafe fn load_app(&self, app_id: usize) {
         if app_id >= self.num_app {
-            panic!("All applications completed!");
+            println!("All applications completed, shutdown!");
+            crate::sbi::shutdown();
         }
         println!("[kernel] Loading app_{}", app_id);
         // clear icache
