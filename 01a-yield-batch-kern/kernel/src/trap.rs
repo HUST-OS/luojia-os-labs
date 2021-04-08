@@ -122,7 +122,7 @@ extern "C" fn rust_fast_syscall(ctx: &FastContext) -> ! {
 pub unsafe extern "C" fn restore(_ctx: *mut TrapContext) -> ! {
     asm!(
         "mv     sp, a0",
-        "ld      t0, 31*8(sp)
+        "ld     t0, 31*8(sp)
         ld      t1, 32*8(sp)
         ld      t2, 1*8(sp)
         csrw    sstatus, t0
