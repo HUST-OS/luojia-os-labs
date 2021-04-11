@@ -5,6 +5,10 @@
 #[macro_use]
 extern crate complex_ctx_user;
 
+use core::future::Future;
+use core::task::{Context, Poll};
+use core::pin::Pin;
+
 struct FibonacciFuture {
     a: usize,
     b: usize,
@@ -12,16 +16,11 @@ struct FibonacciFuture {
     cnt: usize,
 }
 
-impl FibonacciFuture {
-    
+impl FibonacciFuture {    
     fn new(cnt: usize) -> FibonacciFuture {
         FibonacciFuture { a: 0, b: 1, i: 0, cnt }
     }
 }
-use core::future::Future;
-use core::task::{Context, Poll};
-use core::pin::Pin;
-
 
 impl Future for FibonacciFuture {
     type Output = ();

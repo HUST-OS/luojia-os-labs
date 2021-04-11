@@ -39,8 +39,6 @@ pub struct RoundRobinScheduler {
     tasks: LinkedList<Arc<UserTask>>,
 }
 
-// todo: sleep, wake
-
 impl RoundRobinScheduler {
     pub fn new() -> Self {
         Self { 
