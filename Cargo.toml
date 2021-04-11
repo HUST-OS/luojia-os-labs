@@ -7,6 +7,8 @@ members = [
     "01a-yield-batch-kern/user",
     "02-multi-program-kern/kernel",
     "02-multi-program-kern/user",
+    "02a-complex-ctx-kern/kernel",
+    "02a-complex-ctx-kern/user",
 ]
 
 [profile.dev]
