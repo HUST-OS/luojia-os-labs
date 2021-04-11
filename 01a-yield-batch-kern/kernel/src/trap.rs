@@ -205,7 +205,6 @@ pub unsafe extern "C" fn trap_entry() -> ! {
         sd      t2, 1*8(sp)",
         "mv     a0, sp
         call    {trap_handler}",
-        "2:", // 恢复上下文 
         "mv     sp, a0",
         "ld     t0, 31*8(sp)
         ld      t1, 32*8(sp)
