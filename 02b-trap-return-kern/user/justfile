@@ -6,14 +6,14 @@ objdump := "riscv64-unknown-elf-objdump"
 objcopy := "rust-objcopy --binary-architecture=riscv64"
 size := "rust-size"
 
-build app: elf
+build app: (elf app)
     @{{objcopy}} {{build-path}}/{{app}} --strip-all -O binary {{build-path}}/{{app}}.bin
 
-elf:
-    @cargo build --target {{target}} --bins 
+elf app:
+    @cargo rustc --bin {{app}} --target {{target}} -- -C relocation-model=pic
 
-asm app: elf
+asm app: (elf app)
     @{{objdump}} -D {{build-path}}/{{app}} | less
 
-size app: elf
+size app: (elf app)
     @{{size}} -A -x {{build-path}}/{{app}}
