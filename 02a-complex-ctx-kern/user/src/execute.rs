@@ -1,5 +1,6 @@
 use core::future::Future;
 use alloc::sync::Arc;
+use alloc::vec::Vec;
 
 use spin::Mutex;
 use crate::task::{UserTask, RoundRobinScheduler};
@@ -12,7 +13,7 @@ pub fn execute_main(main: impl Future<Output = i32> + Send + Sync + 'static) -> 
     });
     let mut scheduler = RoundRobinScheduler::new();
     scheduler.push_task(Arc::new(main_task));
-    // let mut stack = Vec::with_capacity(4 * 1024);
+    let mut stack: Vec<u8> = Vec::with_capacity(4 * 1024);
     loop {
         if let Some(task) = scheduler.pop_task() {
             task.mark_sleeping();

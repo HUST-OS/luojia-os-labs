@@ -188,6 +188,22 @@ dependencies = [
 ]
 
 [[package]]
+name = "trap-return-kern"
+version = "0.1.0"
+dependencies = [
+ "lazy_static",
+ "r0",
+ "riscv",
+]
+
+[[package]]
+name = "trap-return-user"
+version = "0.1.0"
+dependencies = [
+ "r0",
+]
+
+[[package]]
 name = "woke"
 version = "0.0.2"
 source = "registry+https://github.com/rust-lang/crates.io-index"

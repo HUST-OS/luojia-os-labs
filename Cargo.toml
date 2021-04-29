@@ -9,6 +9,8 @@ members = [
     "02-multi-program-kern/user",
     "02a-complex-ctx-kern/kernel",
     "02a-complex-ctx-kern/user",
+    "02b-trap-return-kern/kernel",
+    "02b-trap-return-kern/user",
 ]
 
 [profile.dev]
