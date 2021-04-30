@@ -80,6 +80,22 @@ dependencies = [
 ]
 
 [[package]]
+name = "magic-return-kern"
+version = "0.1.0"
+dependencies = [
+ "lazy_static",
+ "r0",
+ "riscv",
+]
+
+[[package]]
+name = "magic-return-user"
+version = "0.1.0"
+dependencies = [
+ "r0",
+]
+
+[[package]]
 name = "memchr"
 version = "2.3.4"
 source = "registry+https://github.com/rust-lang/crates.io-index"
