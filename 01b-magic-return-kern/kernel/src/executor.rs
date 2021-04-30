@@ -230,3 +230,5 @@ extern "C" fn user_trap_handler(user_ctx: &mut UserContext) -> ResumeResult<'_> 
     }
 }
 // 返回值是一个复杂的结构体。存寄存器里好像没问题，关键是有些函数它返回值存栈上，就很离谱
+// 如果返回值复杂到两个usize存不下，a0应该是内核原来函数的sp（就是sp+15*8），a1才是user_ctx
+// 不知道怎么统一起来，从汇编调用函数，函数的定义还是越简单越好
