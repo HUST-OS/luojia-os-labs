@@ -218,6 +218,7 @@ unsafe extern "C" fn to_kernel_restore() -> ! {
     )
 }
 
+// 这个函数的返回值必须不能放在栈上，否则内核将会出错
 extern "C" fn user_trap_handler(user_ctx: &mut UserContext) -> ResumeResult<'_> {
     let stval = stval::read();
     match scause::read().cause() {
