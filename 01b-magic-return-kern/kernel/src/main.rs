@@ -27,9 +27,13 @@ pub extern "C" fn rust_main(hartid: usize, dtb_pa: usize) -> ! {
     app::APP_MANAGER.print_app_info();
     let mut rt = executor::Runtime::new_user();
     rt.context_mut().sepc = app::APP_MANAGER.prepare_next_app();
+    execute(&mut rt)
+}
+
+fn execute(rt: &mut executor::Runtime) -> ! {
+    use executor::ResumeResult;
+    use crate::syscall::{syscall, SyscallOperation};
     loop {
-        use executor::ResumeResult;
-        use crate::syscall::{syscall, SyscallOperation};
         match rt.resume() {
             ResumeResult::Syscall(ctx) => {
                 match syscall(ctx.a7, ctx.a6, [ctx.a0, ctx.a1, ctx.a2, ctx.a3, ctx.a4, ctx.a5]) {

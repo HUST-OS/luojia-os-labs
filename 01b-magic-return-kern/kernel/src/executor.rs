@@ -53,7 +53,7 @@ pub enum ResumeResult<'a> {
     Syscall(&'a mut UserContext),
     LoadAccessFault(usize),
     StoreAccessFault(usize),
-    IllegalInstruction(usize),
+    IllegalInstruction(usize), // 这里暂时不能有两个参数，两个参数会把返回值存栈上，导致出现一些问题
 }
 
 #[derive(Debug)]
@@ -221,12 +221,11 @@ unsafe extern "C" fn to_kernel_restore() -> ! {
 extern "C" fn user_trap_handler(user_ctx: &mut UserContext) -> ResumeResult<'_> {
     let stval = stval::read();
     match scause::read().cause() {
-        Trap::Exception(Exception::UserEnvCall) => {
-            ResumeResult::Syscall(user_ctx)
-        }
+        Trap::Exception(Exception::UserEnvCall) => ResumeResult::Syscall(user_ctx),
         Trap::Exception(Exception::LoadFault) => ResumeResult::LoadAccessFault(stval),
         Trap::Exception(Exception::StoreFault) => ResumeResult::StoreAccessFault(stval),
         Trap::Exception(Exception::IllegalInstruction) => ResumeResult::IllegalInstruction(stval),
         _ => panic!("todo: handle more exceptions!")
     }
 }
+// 返回值是一个复杂的结构体。存寄存器里好像没问题，关键是有些函数它返回值存栈上，就很离谱
