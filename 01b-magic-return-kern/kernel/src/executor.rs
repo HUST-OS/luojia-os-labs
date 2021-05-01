@@ -44,17 +44,28 @@ impl Runtime {
     }
 
     pub fn resume(&mut self) -> ResumeResult {
-        unsafe { do_resume(&mut self.context as *mut _) }
+        let user_ctx = unsafe { &mut *do_resume(&mut self.context as *mut _) };
+        let stval = stval::read();
+        match scause::read().cause() {
+            Trap::Exception(Exception::UserEnvCall) => ResumeResult::Syscall(user_ctx),
+            Trap::Exception(Exception::LoadFault) => ResumeResult::LoadAccessFault(user_ctx, stval),
+            Trap::Exception(Exception::StoreFault) => ResumeResult::StoreAccessFault(user_ctx, stval),
+            Trap::Exception(Exception::IllegalInstruction) => ResumeResult::IllegalInstruction(user_ctx),
+            _ => panic!("todo: handle more exceptions!")
+        }
     }
 }
 
 #[repr(C)]
 pub enum ResumeResult<'a> {
     Syscall(&'a mut UserContext),
-    LoadAccessFault(usize),
-    StoreAccessFault(usize),
-    IllegalInstruction(usize), // 这里暂时不能有两个参数，两个参数会把返回值存栈上，导致出现一些问题
+    LoadAccessFault(&'a mut UserContext, usize),
+    StoreAccessFault(&'a mut UserContext, usize),
+    IllegalInstruction(&'a mut UserContext),
 }
+
+// 如果采用user_trap_handler的设计，这里的每个enum条件不能有两个参数，两个参数会导致返回值大于两个usize长度，
+// 导致必须存栈上，会产生一些问题，详见代码的结尾
 
 #[derive(Debug)]
 #[repr(C)]
@@ -83,7 +94,7 @@ pub struct UserContext {
 
 #[naked]
 #[link_section = ".text"]
-unsafe extern "C" fn do_resume<'a>(_user_context: *mut UserContext) -> ResumeResult<'a> {
+unsafe extern "C" fn do_resume<'a>(_user_context: *mut UserContext) -> *mut UserContext {
     asm!("j     {from_kernel_save}", from_kernel_save = sym from_kernel_save, options(noreturn))
 }
 
@@ -183,9 +194,7 @@ pub unsafe extern "C" fn from_user_save() -> ! {
         "sd     t2, 1*8(sp)", // 保存用户栈
         "mv     a0, sp", // a0:用户上下文
         "ld     sp, 19*8(sp)", // sp:内核栈
-        "la     ra, {to_kernel_restore}",
-        "j      {user_trap_handler}",
-        user_trap_handler = sym user_trap_handler,
+        "j      {to_kernel_restore}",
         to_kernel_restore = sym to_kernel_restore,
         options(noreturn)
     )
@@ -218,17 +227,19 @@ unsafe extern "C" fn to_kernel_restore() -> ! {
     )
 }
 
-// 这个函数的返回值必须不能放在栈上，否则内核将会出错
-extern "C" fn user_trap_handler(user_ctx: &mut UserContext) -> ResumeResult<'_> {
-    let stval = stval::read();
-    match scause::read().cause() {
-        Trap::Exception(Exception::UserEnvCall) => ResumeResult::Syscall(user_ctx),
-        Trap::Exception(Exception::LoadFault) => ResumeResult::LoadAccessFault(stval),
-        Trap::Exception(Exception::StoreFault) => ResumeResult::StoreAccessFault(stval),
-        Trap::Exception(Exception::IllegalInstruction) => ResumeResult::IllegalInstruction(stval),
-        _ => panic!("todo: handle more exceptions!")
-    }
-}
+// 这里可以采取中断处理函数的设计，比如这样：
+// extern "C" fn user_trap_handler(user_ctx: &mut UserContext) -> ResumeResult<'_> {
+//     let stval = stval::read();
+//     match scause::read().cause() {
+//         Trap::Exception(Exception::UserEnvCall) => ResumeResult::Syscall(user_ctx),
+//         Trap::Exception(Exception::LoadFault) => ResumeResult::LoadAccessFault(stval),
+//         Trap::Exception(Exception::StoreFault) => ResumeResult::StoreAccessFault(stval),
+//         Trap::Exception(Exception::IllegalInstruction) => ResumeResult::IllegalInstruction(stval),
+//         _ => panic!("todo: handle more exceptions!")
+//     }
+// }
+// 没有采取这种设计的方法是，直接在resume函数里处理中断的类型，这样可以避免返回值太大的问题。
+// user_trap_handler这个函数的返回值必须较短，不能放在栈上，否则内核将会出错
 // 返回值是一个复杂的结构体。存寄存器里好像没问题，关键是有些函数它返回值存栈上，就很离谱
 // 如果返回值复杂到两个usize存不下，a0应该是内核原来函数的sp（就是sp+15*8），a1才是user_ctx
 // 不知道怎么统一起来，从汇编调用函数，函数的定义还是越简单越好

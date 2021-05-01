@@ -56,18 +56,18 @@ fn execute(rt: &mut executor::Runtime) -> ! {
                     }
                 }
             },
-            ResumeResult::LoadAccessFault(a) => {
-                println!("[kernel] Load access fault in application address {:x}, core dumped.", a);
+            ResumeResult::LoadAccessFault(ctx, a) => {
+                println!("[kernel] Load access fault to {:#x} in {:#x}, core dumped.", a, ctx.sepc);
                 rt.reset();
                 rt.context_mut().sepc = app::APP_MANAGER.prepare_next_app();
             },
-            ResumeResult::StoreAccessFault(a) => {
-                println!("[kernel] Store access fault in application address {:x}, core dumped.", a);
+            ResumeResult::StoreAccessFault(ctx, a) => {
+                println!("[kernel] Store access fault to {:#x} in {:#x}, core dumped.", a, ctx.sepc);
                 rt.reset();
                 rt.context_mut().sepc = app::APP_MANAGER.prepare_next_app();
             },
-            ResumeResult::IllegalInstruction(a) => {
-                println!("[kernel] Illegal instruction in application address {:x}, core dumped.", a);
+            ResumeResult::IllegalInstruction(ctx) => {
+                println!("[kernel] Illegal instruction in {:#x}, core dumped.", ctx.sepc);
                 rt.reset();
                 rt.context_mut().sepc = app::APP_MANAGER.prepare_next_app();
             },
