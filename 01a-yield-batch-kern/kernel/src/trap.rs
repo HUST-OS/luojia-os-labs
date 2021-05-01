@@ -163,8 +163,7 @@ pub unsafe extern "C" fn trap_entry() -> ! {
         "csrr   a7, scause", // 此时恰好a7的值已经使用过了
         "addi   a7, a7, -8
         bnez    a7, 1f",
-        "call   {fast_syscall}", // a0-a6未被更改，恰为该函数的参数
-        "unimp", // 非法指令。fast_syscall函数不可能返回，应当使用其它恢复上下文的函数
+        "j      {fast_syscall}", // 直接跳转。a0-a6未被更改，恰为该函数的参数
         "1:", // 需要保存上下文
         "addi   sp, sp, -33*8",
         "sd     x1, 0*8(sp)
