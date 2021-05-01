@@ -71,15 +71,15 @@ pub enum ResumeResult<'a> {
 #[derive(Debug)]
 #[repr(C)]
 pub struct UserContext {
-    pub ra: usize,
+    pub ra: usize, // 0
     pub sp: usize,
+    pub gp: usize,
+    pub tp: usize,
     pub t0: usize,
     pub t1: usize,
     pub t2: usize,
-    pub t3: usize,
-    pub t4: usize,
-    pub t5: usize,
-    pub t6: usize,
+    pub s0: usize,
+    pub s1: usize,
     pub a0: usize,
     pub a1: usize,
     pub a2: usize,
@@ -88,9 +88,23 @@ pub struct UserContext {
     pub a5: usize,
     pub a6: usize,
     pub a7: usize,
-    pub sstatus: Sstatus,
-    pub sepc: usize,
-    pub kernel_stack: usize, // 19
+    pub s2: usize,
+    pub s3: usize,
+    pub s4: usize,
+    pub s5: usize,
+    pub s6: usize,
+    pub s7: usize,
+    pub s8: usize,
+    pub s9: usize,
+    pub s10: usize,
+    pub s11: usize,
+    pub t3: usize,
+    pub t4: usize,
+    pub t5: usize,
+    pub t6: usize, // 30
+    pub sstatus: Sstatus, // 31
+    pub sepc: usize, // 32
+    pub kernel_stack: usize, // 33
 }
 
 #[naked]
@@ -131,22 +145,22 @@ unsafe extern "C" fn from_kernel_save(_user_context: *mut UserContext) -> ! {
 #[link_section = ".text"]
 pub unsafe extern "C" fn to_user_restore(_user_context: *mut UserContext) -> ! {
     asm!( // a0:用户上下文
-        "sd     sp, 19*8(a0)", // 内核栈顶放进用户上下文
+        "sd     sp, 33*8(a0)", // 内核栈顶放进用户上下文
         "csrw   sscratch, a0", // 新sscratch:用户上下文
         // sscratch:用户上下文
         "mv     sp, a0", // 新sp:用户上下文
-        "ld     t0, 17*8(sp)
-        ld      t1, 18*8(sp)
+        "ld     t0, 31*8(sp)
+        ld      t1, 32*8(sp)
         csrw    sstatus, t0
         csrw    sepc, t1",
         "ld     ra, 0*8(sp)
-        ld      t0, 2*8(sp)
-        ld      t1, 3*8(sp)
-        ld      t2, 4*8(sp)
-        ld      t3, 5*8(sp)
-        ld      t4, 6*8(sp)
-        ld      t5, 7*8(sp)
-        ld      t6, 8*8(sp)
+        ld      gp, 2*8(sp)
+        ld      tp, 3*8(sp)
+        ld      t0, 4*8(sp)
+        ld      t1, 5*8(sp)
+        ld      t2, 6*8(sp)
+        ld      s0, 7*8(sp)
+        ld      s1, 8*8(sp)
         ld      a0, 9*8(sp)
         ld      a1, 10*8(sp)
         ld      a2, 11*8(sp)
@@ -154,7 +168,21 @@ pub unsafe extern "C" fn to_user_restore(_user_context: *mut UserContext) -> ! {
         ld      a4, 13*8(sp)
         ld      a5, 14*8(sp)
         ld      a6, 15*8(sp)
-        ld      a7, 16*8(sp)",
+        ld      a7, 16*8(sp)
+        ld      s2, 17*8(sp)
+        ld      s3, 18*8(sp)
+        ld      s4, 19*8(sp)
+        ld      s5, 20*8(sp)
+        ld      s6, 21*8(sp)
+        ld      s7, 22*8(sp)
+        ld      s8, 23*8(sp)
+        ld      s9, 24*8(sp)
+        ld     s10, 25*8(sp)
+        ld     s11, 26*8(sp)
+        ld      t3, 27*8(sp)
+        ld      t4, 28*8(sp)
+        ld      t5, 29*8(sp)
+        ld      t6, 30*8(sp)",
         "ld     sp, 1*8(sp)", // 新sp:用户栈
         // sp:用户栈, sscratch:用户上下文
         "sret",
@@ -171,13 +199,13 @@ pub unsafe extern "C" fn from_user_save() -> ! {
         ".p2align 2",
         "csrrw  sp, sscratch, sp", // 新sscratch:用户栈, 新sp:用户上下文
         "sd     ra, 0*8(sp)
-        sd      t0, 2*8(sp)
-        sd      t1, 3*8(sp)
-        sd      t2, 4*8(sp)
-        sd      t3, 5*8(sp)
-        sd      t4, 6*8(sp)
-        sd      t5, 7*8(sp)
-        sd      t6, 8*8(sp)
+        sd      gp, 2*8(sp)
+        sd      tp, 3*8(sp)
+        sd      t0, 4*8(sp)
+        sd      t1, 5*8(sp)
+        sd      t2, 6*8(sp)
+        sd      s0, 7*8(sp)
+        sd      s1, 8*8(sp)
         sd      a0, 9*8(sp)
         sd      a1, 10*8(sp)
         sd      a2, 11*8(sp)
@@ -185,16 +213,30 @@ pub unsafe extern "C" fn from_user_save() -> ! {
         sd      a4, 13*8(sp)
         sd      a5, 14*8(sp)
         sd      a6, 15*8(sp)
-        sd      a7, 16*8(sp)",
+        sd      a7, 16*8(sp)
+        sd      s2, 17*8(sp)
+        sd      s3, 18*8(sp)
+        sd      s4, 19*8(sp)
+        sd      s5, 20*8(sp)
+        sd      s6, 21*8(sp)
+        sd      s7, 22*8(sp)
+        sd      s8, 23*8(sp)
+        sd      s9, 24*8(sp)
+        sd     s10, 25*8(sp)
+        sd     s11, 26*8(sp)
+        sd      t3, 27*8(sp)
+        sd      t4, 28*8(sp)
+        sd      t5, 29*8(sp)
+        sd      t6, 30*8(sp)",
         "csrr   t0, sstatus
-        sd      t0, 17*8(sp)",
+        sd      t0, 31*8(sp)",
         "csrr   t1, sepc
-        sd      t1, 18*8(sp)",
+        sd      t1, 32*8(sp)",
         // sscratch:用户栈,sp:用户上下文
         "csrrw  t2, sscratch, sp", // 新sscratch:用户上下文,t2:用户栈
         "sd     t2, 1*8(sp)", // 保存用户栈
         "mv     a0, sp", // a0:用户上下文
-        "ld     sp, 19*8(sp)", // sp:内核栈
+        "ld     sp, 33*8(sp)", // sp:内核栈
         "j      {to_kernel_restore}",
         to_kernel_restore = sym to_kernel_restore,
         options(noreturn)
@@ -206,7 +248,7 @@ pub unsafe extern "C" fn from_user_save() -> ! {
 unsafe extern "C" fn to_kernel_restore() -> ! {
     asm!( // sscratch:用户上下文
         "csrr   sp, sscratch", // sp:用户上下文
-        "ld     sp, 19*8(sp)", // sp:内核栈
+        "ld     sp, 33*8(sp)", // sp:内核栈
         "ld     ra, 0*8(sp)
         ld      gp, 1*8(sp)
         ld      tp, 2*8(sp)
