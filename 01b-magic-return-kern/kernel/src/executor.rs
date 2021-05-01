@@ -44,6 +44,7 @@ impl Runtime {
     }
 
     pub fn resume(&mut self) -> ResumeResult {
+        // note(unsafe): 当前上下文可以用的借用；如果超过借用的范围，生命周期会失效
         let user_ctx = unsafe { &mut *do_resume(&mut self.context as *mut _) };
         let stval = stval::read();
         match scause::read().cause() {
