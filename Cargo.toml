@@ -13,6 +13,8 @@ members = [
     "02a-complex-ctx-kern/user",
     "02b-trap-return-kern/kernel",
     "02b-trap-return-kern/user",
+    "03-virt-addr-kern",
+    "03-mmu-users",
 ]
 
 [profile.dev]

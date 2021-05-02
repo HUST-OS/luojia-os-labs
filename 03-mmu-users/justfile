@@ -1,0 +1,19 @@
+target := "riscv64imac-unknown-none-elf"
+mode := "debug"
+build-path := "../target/" + target + "/" + mode + "/"
+
+objdump := "riscv64-unknown-elf-objdump"
+objcopy := "rust-objcopy --binary-architecture=riscv64"
+size := "rust-size"
+
+build app: (elf app)
+    @{{objcopy}} {{build-path}}/{{app}} --strip-all -O binary {{build-path}}/{{app}}.bin
+
+elf app:
+    @cargo build --target {{target}} --bin {{app}} 
+
+asm app: (elf app)
+    @{{objdump}} -D {{build-path}}/{{app}} | less
+
+size app: (elf app)
+    @{{size}} -A -x {{build-path}}/{{app}}
