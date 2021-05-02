@@ -10,6 +10,7 @@ mod sbi;
 mod app;
 mod syscall;
 mod executor;
+mod mm;
 
 use core::panic::PanicInfo;
 use executor::KernelTrap;
