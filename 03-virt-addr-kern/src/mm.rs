@@ -227,15 +227,10 @@ impl StackAsidAllocator {
 }
 
 pub(crate) fn test_asid_alloc() {
-    let max_asid = max_asid();
-    println!("[kernel-asid-test] Platform max asid: {:x?}", max_asid);
+    let max_asid = AddressSpaceId(0xffff);
     let mut alloc = StackAsidAllocator::new(max_asid);
     let a1 = alloc.allocate_asid();
     assert_eq!(a1, Ok(AddressSpaceId(0)), "first allocation");
-    if max_asid == DEFAULT_ASID {
-        println!("[kernel-asid-test] Asid not implemented; test pass");
-        return;
-    }
     let a2 = alloc.allocate_asid();
     assert_eq!(a2, Ok(AddressSpaceId(1)), "second allocation");
     alloc.deallocate_asid(a1.unwrap());
@@ -253,5 +248,12 @@ pub(crate) fn test_asid_alloc() {
     assert_eq!(an, Ok(AddressSpaceId(1)), "after free second one, allocate next");
     let an = alloc.allocate_asid();
     assert_eq!(an, Err(AsidAllocError), "no asid remains, allocate next");
-    println!("[kernel-asid-test] Asid allocation test passed");
+    
+    let mut alloc = StackAsidAllocator::new(DEFAULT_ASID); // asid not implemented
+    let a1 = alloc.allocate_asid();
+    assert_eq!(a1, Ok(AddressSpaceId(0)), "asid not implemented, first allocation");
+    let a2 = alloc.allocate_asid();
+    assert_eq!(a2, Err(AsidAllocError), "asid not implemented, second allocation");
+
+    println!("[kernel-asid-test] Asid allocator test passed");
 }
