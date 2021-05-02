@@ -343,6 +343,6 @@ impl<A: FrameAllocator> PagedAddrSpace<A> {
 
 // 切换地址空间，同时需要提供1.地址空间的详细设置 2.地址空间编号
 // 不一定最后的API就是这样的，留个坑
-pub fn activate(addr_space: &mut PagedAddrSpace, asid: AddressSpaceId) {
-    todo!()    
-}
+// pub fn activate(addr_space: &PagedAddrSpace, asid: AddressSpaceId) {
+//     todo!()    
+// }
