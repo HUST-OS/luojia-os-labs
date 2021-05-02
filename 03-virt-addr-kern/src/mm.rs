@@ -103,7 +103,10 @@ impl StackFrameAllocator {
     pub fn new(start: PhysPageNum, end: PhysPageNum) -> Self {
         StackFrameAllocator { current: start, end, recycled: Vec::new() }
     }
-    pub fn allocate_frame(&mut self) -> Result<PhysPageNum, FrameAllocError> {
+    pub fn allocate_frame(&mut self, layout: FrameLayout) -> Result<PhysPageNum, FrameAllocError> {
+        if layout.frame_align() != 1 {
+            return Err(FrameAllocError) // 暂不支持大页对齐分配
+        }
         if let Some(ppn) = self.recycled.pop() {
             Ok(ppn)
         } else {
@@ -116,7 +119,7 @@ impl StackFrameAllocator {
             }
         }
     }
-    pub fn deallocate_frame(&mut self, ppn: PhysPageNum) {
+    pub fn deallocate_frame(&mut self, ppn: PhysPageNum, _layout: FrameLayout) {
         // validity check
         if ppn.is_within_range(self.current, self.end) || self.recycled.iter().find(|&v| {*v == ppn}).is_some() {
             panic!("Frame ppn={:x?} has not been allocated!", ppn);
@@ -129,16 +132,44 @@ impl StackFrameAllocator {
 #[derive(Copy, Clone, PartialEq, Eq, Debug)]
 pub struct FrameAllocError;
 
+#[derive(Copy, Clone, PartialEq, Eq, Debug)]
+pub struct FrameLayout {
+    // 对齐到的页帧数。比如，如果是1，说明按字节运算，对齐到4K字节，
+    // 如果是512，对齐到2M字节；如果是512*512，对齐到1G字节。
+    frame_align: usize,
+}
+
+impl FrameLayout {
+    // // 创建一个对齐到页帧数量的页帧布局。如果对齐数不合法，将返回错误
+    // pub const fn new_sv39(frame_align: usize) -> Result<Self, FrameLayoutError> {
+    //     if frame_align != 1 && frame_align != 512 && frame_align != 512 * 512 {
+    //         return Err(FrameLayoutError)
+    //     }
+    //     Ok(Self { frame_align })
+    // }
+    // 适用于最低的叶子节点的对齐；即，只对齐到1个页帧
+    pub const fn leaf_frame() -> Self {
+        Self { frame_align: 1 }
+    }
+    pub const fn frame_align(&self) -> usize {
+        self.frame_align
+    }
+}
+
+#[derive(Copy, Clone, PartialEq, Eq, Debug)]
+pub struct FrameLayoutError;
+
 pub(crate) fn test_frame_alloc() {
     let from = PhysAddr(0x80_000_000).page_number();
     let to = PhysAddr(0x100_000_000).page_number();
     let mut alloc = StackFrameAllocator::new(from, to);
-    let f1 = alloc.allocate_frame();
+    let layout_one = FrameLayout::leaf_frame();
+    let f1 = alloc.allocate_frame(layout_one);
     assert_eq!(f1, Ok(PhysPageNum(0x80000)), "first allocation");
-    let f2 = alloc.allocate_frame();
+    let f2 = alloc.allocate_frame(layout_one);
     assert_eq!(f2, Ok(PhysPageNum(0x80001)), "second allocation");
-    alloc.deallocate_frame(f1.unwrap());
-    let f3 = alloc.allocate_frame();
+    alloc.deallocate_frame(f1.unwrap(), layout_one);
+    let f3 = alloc.allocate_frame(layout_one);
     assert_eq!(f3, Ok(PhysPageNum(0x80000)), "after free first, third allocation");
     println!("[kernel-frame-test] Frame allocator test passed");
 }
@@ -177,8 +208,9 @@ pub fn max_asid() -> AddressSpaceId {
 }
 
 // 在看代码的同志们可能发现，这里分配地址空间编号的算法和StackFrameAllocator很像。
-// 这里需要注意的是，分配页帧的算法经常要被使用，最好最快的写法不一定是简单的栈式回收分配，
+// 这里需要注意的是，分配页帧的算法经常要被使用，而且包含很多参数，最好最快的写法不一定是简单的栈式回收分配，
 // 更好的高性能内核设计，页帧分配的算法或许会有较大的优化空间。
+// 可以包含的参数，比如，页帧的内存布局，包括内存对齐的选项，这是大页优化非常需要的选项。
 // 但是地址空间编号的分配算法而且不需要经常调用，所以可以设计得很简单，普通栈式回收的算法就足够使用了。
 
 // 地址空间编号分配器，**每个处理核都有一个**
@@ -259,34 +291,35 @@ pub(crate) fn test_asid_alloc() {
 }
 
 pub trait FrameAllocator {
-    fn allocate_frame(&self) -> Result<PhysPageNum, FrameAllocError>;
-    fn deallocate_frame(&self, ppn: PhysPageNum);
+    fn allocate_frame(&self, layout: FrameLayout) -> Result<PhysPageNum, FrameAllocError>;
+    fn deallocate_frame(&self, ppn: PhysPageNum, layout: FrameLayout);
 }
 
 pub type DefaultFrameAllocator = spin::Mutex<StackFrameAllocator>;
 
 impl FrameAllocator for DefaultFrameAllocator {
-    fn allocate_frame(&self) -> Result<PhysPageNum, FrameAllocError> {
-        self.lock().allocate_frame()
+    fn allocate_frame(&self, layout: FrameLayout) -> Result<PhysPageNum, FrameAllocError> {
+        self.lock().allocate_frame(layout)
     }
-    fn deallocate_frame(&self, ppn: PhysPageNum) {
-        self.lock().deallocate_frame(ppn)
+    fn deallocate_frame(&self, ppn: PhysPageNum, layout: FrameLayout) {
+        self.lock().deallocate_frame(ppn, layout)
     }
 }
 
 impl<A: FrameAllocator + ?Sized> FrameAllocator for &A { 
-    fn allocate_frame(&self) -> Result<PhysPageNum, FrameAllocError> {
-        (**self).allocate_frame()
+    fn allocate_frame(&self, layout: FrameLayout) -> Result<PhysPageNum, FrameAllocError> {
+        (**self).allocate_frame(layout)
     }
-    fn deallocate_frame(&self, ppn: PhysPageNum) {
-        (**self).deallocate_frame(ppn)
+    fn deallocate_frame(&self, ppn: PhysPageNum, layout: FrameLayout) {
+        (**self).deallocate_frame(ppn, layout)
     }
 }
 
 // 表示整个页帧内存的所有权
 #[derive(Debug)]
 struct FrameBox<A: FrameAllocator = DefaultFrameAllocator> {
-    ppn: PhysPageNum,
+    ppn: PhysPageNum, // 相当于*mut类型的指针
+    layout: FrameLayout,
     frame_alloc: A,
 }
 
@@ -298,9 +331,9 @@ impl<A: FrameAllocator> FrameBox<A> {
     //     Self { ppn, frame_alloc }
     // }
 
-    fn try_new_in(mut frame_alloc: A) -> Result<Self, FrameAllocError> {
-        let ppn = frame_alloc.allocate_frame()?;
-        Ok(Self { ppn, frame_alloc })
+    fn try_new_in(mut frame_alloc: A, layout: FrameLayout) -> Result<Self, FrameAllocError> {
+        let ppn = frame_alloc.allocate_frame(layout)?;
+        Ok(Self { ppn, frame_alloc, layout })
     }
 
     // fn phys_page_num(&self) -> PhysPageNum {
@@ -310,22 +343,37 @@ impl<A: FrameAllocator> FrameBox<A> {
 
 impl<A: FrameAllocator> Drop for FrameBox<A> {
     fn drop(&mut self) {
-        self.frame_alloc.deallocate_frame(self.ppn);
+        self.frame_alloc.deallocate_frame(self.ppn, self.layout);
     }
+}
+
+// Sv39分页系统模式；RISC-V RV64下有效
+#[derive(Copy, Clone, PartialEq, Eq, Debug)]
+pub struct Sv39;
+
+pub trait PageMode {
+
+}
+
+impl PageMode for Sv39 {
+    // todo: 分页算法
 }
 
 // 表示一个分页系统实现的地址空间
 #[derive(Debug)]
-pub struct PagedAddrSpace<A: FrameAllocator = DefaultFrameAllocator> {
+pub struct PagedAddrSpace<M, A: FrameAllocator = DefaultFrameAllocator> {
     root_frame: FrameBox<A>,
     frames: Vec<FrameBox<A>>,
+    page_mode: M,
 }
 
-impl<A: FrameAllocator> PagedAddrSpace<A> {
+impl<M: PageMode, A: FrameAllocator> PagedAddrSpace<M, A> {
     // 创建一个空的分页地址空间
-    pub fn try_new_in(frame_alloc: A) -> Result<Self, FrameAllocError> {
-        let root_frame = FrameBox::try_new_in(frame_alloc)?;
-        Ok(Self { root_frame, frames: Vec::new() })
+    pub fn try_new_in(frame_alloc: A, page_mode: M) -> Result<Self, FrameAllocError> {
+        // 这里直接新建了一个最低的layout，我们认为根页帧只需要对齐到帧就可以了
+        let layout = FrameLayout::leaf_frame();
+        let root_frame = FrameBox::try_new_in(frame_alloc, layout)?;
+        Ok(Self { root_frame, frames: Vec::new(), page_mode })
     }
 }
 
