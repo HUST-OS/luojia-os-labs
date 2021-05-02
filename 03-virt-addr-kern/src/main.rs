@@ -7,8 +7,8 @@
 mod console;
 mod sbi;
 mod app;
-mod trap;
 mod syscall;
+mod executor;
 
 use core::panic::PanicInfo;
 
@@ -23,9 +23,55 @@ pub extern "C" fn rust_main(hartid: usize, dtb_pa: usize) -> ! {
     println!(".rodata [{:#x}, {:#x})", srodata as usize, erodata as usize);
     println!(".data [{:#x}, {:#x})", sdata as usize, edata as usize);
     println!(".bss [{:#x}, {:#x})", sbss as usize, ebss as usize);
-    trap::init();
+    executor::init();
     app::APP_MANAGER.print_app_info();
-    app::APP_MANAGER.run_next_app()
+    let mut rt = executor::Runtime::new_user(app::APP_MANAGER.prepare_next_app());
+    execute(&mut rt)
+}
+
+fn execute(rt: &mut executor::Runtime) -> ! {
+    use executor::Resume;
+    use crate::syscall::{syscall, SyscallOperation};
+    loop {
+        match rt.resume() {
+            Resume::Syscall() => {
+                let ctx = rt.context_mut();
+                match syscall(ctx.a7, ctx.a6, [ctx.a0, ctx.a1, ctx.a2, ctx.a3, ctx.a4, ctx.a5]) {
+                    SyscallOperation::Return(ans) => {
+                        ctx.a0 = ans.code;
+                        ctx.a1 = ans.extra;
+                        ctx.sepc = ctx.sepc.wrapping_add(4);
+                    }
+                    SyscallOperation::Terminate(code) => {
+                        println!("[Kernel] Process returned with code {}", code);
+                        rt.prepare_next_app(app::APP_MANAGER.prepare_next_app());
+                    }
+                    SyscallOperation::UserPanic(file, line, col, msg) => {
+                        let file = file.unwrap_or("<no file>");
+                        let msg = msg.unwrap_or("<no message>");
+                        println!("[Kernel] User process panicked at '{}', {}:{}:{}", msg, file, line, col);
+                        rt.prepare_next_app(app::APP_MANAGER.prepare_next_app());
+                    }
+                }
+            },
+            Resume::LoadAccessFault(a) => {
+                let ctx = rt.context_mut();
+                println!("[kernel] Load access fault to {:#x} in {:#x}, core dumped.", a, ctx.sepc);
+                rt.prepare_next_app(app::APP_MANAGER.prepare_next_app());
+            },
+            Resume::StoreAccessFault(a) => {
+                let ctx = rt.context_mut();
+                println!("[kernel] Store access fault to {:#x} in {:#x}, core dumped.", a, ctx.sepc);
+                rt.prepare_next_app(app::APP_MANAGER.prepare_next_app());
+            },
+            Resume::IllegalInstruction(a) => {
+                let ctx = rt.context_mut();
+                println!("[kernel] Illegal instruction {:x} in {:#x}, core dumped.", a, ctx.sepc);
+                rt.prepare_next_app(app::APP_MANAGER.prepare_next_app());
+            },
+            // _ => todo!("handle more exceptions")
+        }
+    }
 }
 
 #[cfg_attr(not(test), panic_handler)]
