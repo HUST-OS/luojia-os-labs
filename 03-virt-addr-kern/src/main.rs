@@ -32,7 +32,7 @@ pub extern "C" fn rust_main(hartid: usize, dtb_pa: usize) -> ! {
     let to = mm::PhysAddr(0x80800000).page_number(); // 暂时对qemu写死
     let mut frame_alloc = spin::Mutex::new(mm::StackFrameAllocator::new(from, to));
     println!("[kernel-frame] Frame allocator: {:x?}", frame_alloc);
-    let kernel_addr_space = mm::PagedAddrSpace::try_new_in(&frame_alloc, mm::Sv39)
+    let kernel_addr_space = mm::PagedAddrSpace::try_new_in(mm::Sv39, &frame_alloc)
         .expect("allocate page to create kernel paged address space");
     println!("[kernel] Kernel address space: {:x?}", kernel_addr_space);
     mm::test_asid_alloc();
