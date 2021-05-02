@@ -139,12 +139,9 @@ pub struct FrameLayout {
     frame_align: usize,
 }
 
+// 应当从PageMode::get_layout_for_level中获得
 impl FrameLayout {
-    // 适用于最低的叶子节点的对齐；即，只对齐到1个页帧
-    pub const fn leaf_frame() -> Self {
-        Self { frame_align: 1 }
-    }
-    // 用于实现PageMode
+    // 未检查参数，用于实现PageMode
     pub const unsafe fn new_unchecked(frame_align: usize) -> Self {
         Self { frame_align }
     }
@@ -160,7 +157,7 @@ pub(crate) fn test_frame_alloc() {
     let from = PhysAddr(0x80_000_000).page_number();
     let to = PhysAddr(0x100_000_000).page_number();
     let mut alloc = StackFrameAllocator::new(from, to);
-    let layout_one = FrameLayout::leaf_frame();
+    let layout_one = unsafe { FrameLayout::new_unchecked(1) };
     let f1 = alloc.allocate_frame(layout_one);
     assert_eq!(f1, Ok(PhysPageNum(0x80000)), "first allocation");
     let f2 = alloc.allocate_frame(layout_one);
