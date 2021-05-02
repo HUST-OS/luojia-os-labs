@@ -22,15 +22,21 @@ use core::pin::Pin;
 use core::ops::{Generator, GeneratorState};
 
 pub extern "C" fn rust_main(hartid: usize, dtb_pa: usize) -> ! {
-    extern "C" { fn sbss(); fn ebss(); }
+    extern "C" { fn sbss(); fn ebss(); fn ekernel(); }
     unsafe { r0::zero_bss(&mut sbss as *mut _ as *mut u64, &mut ebss as *mut _ as *mut u64) };
     mm::heap_init();
+    mm::test_frame_alloc();
     println!("[kernel] Hart id = {}, DTB physical address = {:#x}", hartid, dtb_pa);
-    // println!(".text [{:#x}, {:#x})", stext as usize, etext as usize);
-    // println!(".rodata [{:#x}, {:#x})", srodata as usize, erodata as usize);
-    // println!(".data [{:#x}, {:#x})", sdata as usize, edata as usize);
-    // println!(".bss [{:#x}, {:#x})", sbss as usize, ebss as usize);
+    // 页帧分配器。对整个物理的地址空间来说，无论有多少个核，页帧分配器只有一个。
+    let from = mm::PhysAddr(ekernel as usize).page_number();
+    let to = mm::PhysAddr(0x80800000).page_number(); // 暂时对qemu写死
+    let mut frame_alloc = mm::StackFrameAllocator::new(from, to);
+    println!("[kernel-frame] Frame allocator: {:x?}", frame_alloc);
     executor::init();
+    execute();
+}
+
+fn execute() -> ! {
     app::APP_MANAGER.print_app_info();
     let mut rt = executor::Runtime::new_user(app::APP_MANAGER.prepare_next_app());
     loop {
