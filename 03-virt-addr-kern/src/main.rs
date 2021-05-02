@@ -1,5 +1,6 @@
 #![feature(naked_functions, asm, global_asm)]
 #![feature(panic_info_message)]
+#![feature(generator_trait)]
 #![no_std]
 #![no_main]
 
@@ -11,6 +12,10 @@ mod syscall;
 mod executor;
 
 use core::panic::PanicInfo;
+use executor::KernelTrap;
+use crate::syscall::{syscall, SyscallOperation};
+use core::pin::Pin;
+use core::ops::{Generator, GeneratorState};
 
 pub extern "C" fn rust_main(hartid: usize, dtb_pa: usize) -> ! {
     extern "C" {
@@ -26,15 +31,9 @@ pub extern "C" fn rust_main(hartid: usize, dtb_pa: usize) -> ! {
     executor::init();
     app::APP_MANAGER.print_app_info();
     let mut rt = executor::Runtime::new_user(app::APP_MANAGER.prepare_next_app());
-    execute(&mut rt)
-}
-
-fn execute(rt: &mut executor::Runtime) -> ! {
-    use executor::Resume;
-    use crate::syscall::{syscall, SyscallOperation};
     loop {
-        match rt.resume() {
-            Resume::Syscall() => {
+        match Pin::new(&mut rt).resume(()) {
+            GeneratorState::Yielded(KernelTrap::Syscall()) => {
                 let ctx = rt.context_mut();
                 match syscall(ctx.a7, ctx.a6, [ctx.a0, ctx.a1, ctx.a2, ctx.a3, ctx.a4, ctx.a5]) {
                     SyscallOperation::Return(ans) => {
@@ -54,21 +53,24 @@ fn execute(rt: &mut executor::Runtime) -> ! {
                     }
                 }
             },
-            Resume::LoadAccessFault(a) => {
+            GeneratorState::Yielded(KernelTrap::LoadAccessFault(a)) => {
                 let ctx = rt.context_mut();
                 println!("[kernel] Load access fault to {:#x} in {:#x}, core dumped.", a, ctx.sepc);
                 rt.prepare_next_app(app::APP_MANAGER.prepare_next_app());
             },
-            Resume::StoreAccessFault(a) => {
+            GeneratorState::Yielded(KernelTrap::StoreAccessFault(a)) => {
                 let ctx = rt.context_mut();
                 println!("[kernel] Store access fault to {:#x} in {:#x}, core dumped.", a, ctx.sepc);
                 rt.prepare_next_app(app::APP_MANAGER.prepare_next_app());
             },
-            Resume::IllegalInstruction(a) => {
+            GeneratorState::Yielded(KernelTrap::IllegalInstruction(a)) => {
                 let ctx = rt.context_mut();
                 println!("[kernel] Illegal instruction {:x} in {:#x}, core dumped.", a, ctx.sepc);
                 rt.prepare_next_app(app::APP_MANAGER.prepare_next_app());
             },
+            GeneratorState::Complete(()) => {
+                sbi::shutdown()
+            }
             // _ => todo!("handle more exceptions")
         }
     }

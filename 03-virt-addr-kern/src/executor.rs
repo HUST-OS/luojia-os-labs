@@ -3,6 +3,10 @@ use riscv::register::{
     scause::{self, Trap, Exception},
     stvec::{self, TrapMode}, stval,
 };
+use core::{
+    pin::Pin,
+    ops::{Generator, GeneratorState},
+};
 const USER_STACK_SIZE: usize = 4096 * 2;
 
 pub fn init() {
@@ -48,22 +52,39 @@ impl Runtime {
         self.context.sepc = new_sepc;
     }
 
-    // 在处理异常的时候，使用context_mut得到运行时当前用户的上下文，可以改变上下文的内容
-    pub fn resume(&mut self) -> Resume {
+    // // 在处理异常的时候，使用context_mut得到运行时当前用户的上下文，可以改变上下文的内容
+    // pub fn resume(&mut self) -> Resume {
+    //     unsafe { do_resume(&mut self.context as *mut _) };
+    //     let stval = stval::read();
+    //     match scause::read().cause() {
+    //         Trap::Exception(Exception::UserEnvCall) => Resume::Syscall(),
+    //         Trap::Exception(Exception::LoadFault) => Resume::LoadAccessFault(stval),
+    //         Trap::Exception(Exception::StoreFault) => Resume::StoreAccessFault(stval),
+    //         Trap::Exception(Exception::IllegalInstruction) => Resume::IllegalInstruction(stval),
+    //         _ => panic!("todo: handle more exceptions!")
+    //     }
+    // }
+}
+
+impl Generator for Runtime {
+    type Yield = KernelTrap;
+    type Return = ();
+    fn resume(mut self: Pin<&mut Self>, _arg: ()) -> GeneratorState<Self::Yield, Self::Return> {
         unsafe { do_resume(&mut self.context as *mut _) };
         let stval = stval::read();
-        match scause::read().cause() {
-            Trap::Exception(Exception::UserEnvCall) => Resume::Syscall(),
-            Trap::Exception(Exception::LoadFault) => Resume::LoadAccessFault(stval),
-            Trap::Exception(Exception::StoreFault) => Resume::StoreAccessFault(stval),
-            Trap::Exception(Exception::IllegalInstruction) => Resume::IllegalInstruction(stval),
+        let trap = match scause::read().cause() {
+            Trap::Exception(Exception::UserEnvCall) => KernelTrap::Syscall(),
+            Trap::Exception(Exception::LoadFault) => KernelTrap::LoadAccessFault(stval),
+            Trap::Exception(Exception::StoreFault) => KernelTrap::StoreAccessFault(stval),
+            Trap::Exception(Exception::IllegalInstruction) => KernelTrap::IllegalInstruction(stval),
             _ => panic!("todo: handle more exceptions!")
-        }
+        };
+        GeneratorState::Yielded(trap)
     }
 }
 
 #[repr(C)]
-pub enum Resume {
+pub enum KernelTrap {
     Syscall(),
     LoadAccessFault(usize),
     StoreAccessFault(usize),
