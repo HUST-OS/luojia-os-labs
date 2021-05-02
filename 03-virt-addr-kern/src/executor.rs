@@ -43,6 +43,7 @@ impl Runtime {
         self.context.kernel_stack = 0x233333666666; // 将会被resume函数覆盖
     }
 
+    // 在处理异常的时候，使用context_mut得到运行时当前用户的上下文，可以改变上下文的内容
     pub fn context_mut(&mut self) -> &mut UserContext {
         &mut self.context
     }
@@ -51,19 +52,6 @@ impl Runtime {
         self.reset();
         self.context.sepc = new_sepc;
     }
-
-    // // 在处理异常的时候，使用context_mut得到运行时当前用户的上下文，可以改变上下文的内容
-    // pub fn resume(&mut self) -> Resume {
-    //     unsafe { do_resume(&mut self.context as *mut _) };
-    //     let stval = stval::read();
-    //     match scause::read().cause() {
-    //         Trap::Exception(Exception::UserEnvCall) => Resume::Syscall(),
-    //         Trap::Exception(Exception::LoadFault) => Resume::LoadAccessFault(stval),
-    //         Trap::Exception(Exception::StoreFault) => Resume::StoreAccessFault(stval),
-    //         Trap::Exception(Exception::IllegalInstruction) => Resume::IllegalInstruction(stval),
-    //         _ => panic!("todo: handle more exceptions!")
-    //     }
-    // }
 }
 
 impl Generator for Runtime {
