@@ -1,8 +1,11 @@
 #![feature(naked_functions, asm, global_asm)]
+#![feature(alloc_error_handler)]
 #![feature(panic_info_message)]
 #![feature(generator_trait)]
 #![no_std]
 #![no_main]
+
+extern crate alloc;
 
 #[macro_use]
 mod console;
@@ -19,16 +22,14 @@ use core::pin::Pin;
 use core::ops::{Generator, GeneratorState};
 
 pub extern "C" fn rust_main(hartid: usize, dtb_pa: usize) -> ! {
-    extern "C" {
-        fn stext(); fn etext(); fn srodata(); fn erodata();
-        fn sdata(); fn edata(); fn sbss(); fn ebss();
-    }
+    extern "C" { fn sbss(); fn ebss(); }
     unsafe { r0::zero_bss(&mut sbss as *mut _ as *mut u64, &mut ebss as *mut _ as *mut u64) };
-    println!("Hart id = {}, DTB physical address = {:#x}", hartid, dtb_pa);
-    println!(".text [{:#x}, {:#x})", stext as usize, etext as usize);
-    println!(".rodata [{:#x}, {:#x})", srodata as usize, erodata as usize);
-    println!(".data [{:#x}, {:#x})", sdata as usize, edata as usize);
-    println!(".bss [{:#x}, {:#x})", sbss as usize, ebss as usize);
+    mm::heap_init();
+    println!("[kernel] Hart id = {}, DTB physical address = {:#x}", hartid, dtb_pa);
+    // println!(".text [{:#x}, {:#x})", stext as usize, etext as usize);
+    // println!(".rodata [{:#x}, {:#x})", srodata as usize, erodata as usize);
+    // println!(".data [{:#x}, {:#x})", sdata as usize, edata as usize);
+    // println!(".bss [{:#x}, {:#x})", sbss as usize, ebss as usize);
     executor::init();
     app::APP_MANAGER.print_app_info();
     let mut rt = executor::Runtime::new_user(app::APP_MANAGER.prepare_next_app());
