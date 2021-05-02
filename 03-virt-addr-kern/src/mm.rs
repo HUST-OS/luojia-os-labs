@@ -317,3 +317,32 @@ impl<A: FrameAllocator> PagedAddrSpace<A> {
         Ok(Self { root_frame, frames: Vec::new() })
     }
 }
+
+bitflags::bitflags! {
+    pub struct PageFlags: u8 {
+        const V = 1 << 0;
+        const R = 1 << 1;
+        const W = 1 << 2;
+        const X = 1 << 3;
+        const U = 1 << 4;
+        const G = 1 << 5;
+        const A = 1 << 6;
+        const D = 1 << 7;
+    }
+}
+
+impl<A: FrameAllocator> PagedAddrSpace<A> {
+    pub fn allocate_map(&mut self, vpn: VirtPageNum, flags: PageFlags) -> Result<(), FrameAllocError> {
+        // 页分配算法，巨难写……留坑
+        todo!()
+    }
+    pub fn unmap(&mut self, vpn: VirtPageNum) {
+        todo!()
+    }
+}
+
+// 切换地址空间，同时需要提供1.地址空间的详细设置 2.地址空间编号
+// 不一定最后的API就是这样的，留个坑
+pub fn activate(addr_space: &mut PagedAddrSpace, asid: AddressSpaceId) {
+    todo!()    
+}
