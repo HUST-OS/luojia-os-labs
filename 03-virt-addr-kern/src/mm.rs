@@ -91,6 +91,7 @@ pub struct VirtPageNum(usize);
 
 use alloc::vec::Vec;
 
+// 页帧分配器。**对于物理空间的一个片段，只存在一个页帧分配器，无论有多少个处理核**
 #[derive(Debug)]
 pub struct StackFrameAllocator {
     current: PhysPageNum,
@@ -102,7 +103,6 @@ impl StackFrameAllocator {
     pub fn new(start: PhysPageNum, end: PhysPageNum) -> Self {
         StackFrameAllocator { current: start, end, recycled: Vec::new() }
     }
-
     pub fn allocate_frame(&mut self) -> Result<PhysPageNum, FrameAllocError> {
         if let Some(ppn) = self.recycled.pop() {
             Ok(ppn)
@@ -116,7 +116,6 @@ impl StackFrameAllocator {
             }
         }
     }
-
     pub fn deallocate_frame(&mut self, ppn: PhysPageNum) {
         // validity check
         if ppn.is_within_range(self.current, self.end) || self.recycled.iter().find(|&v| {*v == ppn}).is_some() {
@@ -182,6 +181,7 @@ pub fn max_asid() -> AddressSpaceId {
 // 更好的高性能内核设计，页帧分配的算法或许会有较大的优化空间。
 // 但是地址空间编号的分配算法而且不需要经常调用，所以可以设计得很简单，普通栈式回收的算法就足够使用了。
 
+// 地址空间编号分配器，**每个处理核都有一个**
 #[derive(Debug)]
 pub struct StackAsidAllocator {
     current: AddressSpaceId,
@@ -217,8 +217,8 @@ impl StackAsidAllocator {
             Err(AsidAllocError)
         }
     }
-
-    pub fn deallocate_asid(&mut self, asid: AddressSpaceId) {
+    
+    fn deallocate_asid(&mut self, asid: AddressSpaceId) {
         if asid.next_asid(self.max).is_none() || self.recycled.iter().find(|&v| {*v == asid}).is_some() {
             panic!("Asid {:x?} has not been allocated!", asid);
         }
@@ -256,4 +256,64 @@ pub(crate) fn test_asid_alloc() {
     assert_eq!(a2, Err(AsidAllocError), "asid not implemented, second allocation");
 
     println!("[kernel-asid-test] Asid allocator test passed");
+}
+
+pub trait FrameAllocator {
+    fn allocate_frame(&self) -> Result<PhysPageNum, FrameAllocError>;
+    fn deallocate_frame(&self, ppn: PhysPageNum);
+}
+
+pub type DefaultFrameAllocator = spin::Mutex<StackFrameAllocator>;
+
+impl FrameAllocator for DefaultFrameAllocator {
+    fn allocate_frame(&self) -> Result<PhysPageNum, FrameAllocError> {
+        self.lock().allocate_frame()
+    }
+    fn deallocate_frame(&self, ppn: PhysPageNum) {
+        self.lock().deallocate_frame(ppn)
+    }
+}
+
+// 表示整个页帧内存的所有权
+struct FrameBox<A: FrameAllocator = DefaultFrameAllocator> {
+    ppn: PhysPageNum,
+    frame_alloc: A,
+}
+
+impl<A: FrameAllocator> FrameBox<A> {
+    // unsafe说明。调用者必须保证以下约定：
+    // 1. ppn只被一个FrameBox拥有，也就是不能破坏所有权约定
+    // 2. 这个ppn是由frame_alloc分配的
+    unsafe fn from_ppn(ppn: PhysPageNum, frame_alloc: A) -> Self {
+        Self { ppn, frame_alloc }
+    }
+
+    fn try_new_in(mut frame_alloc: A) -> Result<Self, FrameAllocError> {
+        let ppn = frame_alloc.allocate_frame()?;
+        Ok(Self { ppn, frame_alloc })
+    }
+
+    fn phys_page_num(&self) -> PhysPageNum {
+        self.ppn
+    }
+}
+
+impl<A: FrameAllocator> Drop for FrameBox<A> {
+    fn drop(&mut self) {
+        self.frame_alloc.deallocate_frame(self.ppn);
+    }
+}
+
+// 表示一个分页系统实现的地址空间
+pub struct PagedAddrSpace<A: FrameAllocator = DefaultFrameAllocator> {
+    root_frame: FrameBox<A>,
+    frames: Vec<FrameBox<A>>,
+}
+
+impl<A: FrameAllocator> PagedAddrSpace<A> {
+    // 创建一个空的分页地址空间
+    pub fn try_new_in(mut frame_alloc: A) -> Result<Self, FrameAllocError> {
+        let root_frame = FrameBox::try_new_in(frame_alloc)?;
+        Ok(Self { root_frame, frames: Vec::new() })
+    }
 }
