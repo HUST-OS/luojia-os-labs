@@ -134,12 +134,124 @@ pub(crate) fn test_frame_alloc() {
     let from = PhysAddr(0x80_000_000).page_number();
     let to = PhysAddr(0x100_000_000).page_number();
     let mut alloc = StackFrameAllocator::new(from, to);
-    let f1 = alloc.allocate_frame().unwrap();
-    println!("[kernel-frame-test] First alloc: {:x?}", f1);
-    let f2 = alloc.allocate_frame().unwrap();
-    println!("[kernel-frame-test] Second alloc: {:x?}", f2);
-    alloc.deallocate_frame(f1);
-    println!("[kernel-frame-test] Free first one");
-    let f3 = alloc.allocate_frame().unwrap();
-    println!("[kernel-frame-test] Third alloc: {:x?}", f3);
+    let f1 = alloc.allocate_frame();
+    assert_eq!(f1, Ok(PhysPageNum(0x80000)), "first allocation");
+    let f2 = alloc.allocate_frame();
+    assert_eq!(f2, Ok(PhysPageNum(0x80001)), "second allocation");
+    alloc.deallocate_frame(f1.unwrap());
+    let f3 = alloc.allocate_frame();
+    assert_eq!(f3, Ok(PhysPageNum(0x80000)), "after free first, third allocation");
+    println!("[kernel-frame-test] Frame allocator test passed");
+}
+
+#[derive(Copy, Clone, PartialEq, Eq, Debug)]
+pub struct AddressSpaceId(u16);
+
+impl AddressSpaceId {
+    fn next_asid(&self, max_asid: AddressSpaceId) -> Option<AddressSpaceId> {
+        if self.0 >= max_asid.0 {
+            None
+        } else {
+            Some(AddressSpaceId(self.0.wrapping_add(1)))
+        }
+    }
+}
+
+const DEFAULT_ASID: AddressSpaceId = AddressSpaceId(0); // RISC-V架构规定，必须实现
+
+// 每个平台上是不一样的，需要通过读写satp寄存器获得
+pub fn max_asid() -> AddressSpaceId {
+    #[cfg(target_pointer_width = "64")]
+    let mut val: usize = ((1 << 16) - 1) << 44;
+    #[cfg(target_pointer_width = "32")]
+    let mut val: usize = ((1 << 9) - 1) << 22;
+    unsafe { asm!("
+        csrr    {tmp}, satp
+        or      {val}, {tmp}, {val}
+        csrw    satp, {val}
+        csrrw   {val}, satp, {tmp}
+    ", tmp = out(reg) _, val = inlateout(reg) val) };
+    #[cfg(target_pointer_width = "64")]
+    return AddressSpaceId(((val >> 44) & ((1 << 16) - 1)) as u16);
+    #[cfg(target_pointer_width = "32")]
+    return AddressSpaceId(((val >> 22) & ((1 << 9) - 1)) as u16);
+}
+
+// 在看代码的同志们可能发现，这里分配地址空间编号的算法和StackFrameAllocator很像。
+// 这里需要注意的是，分配页帧的算法经常要被使用，最好最快的写法不一定是简单的栈式回收分配，
+// 更好的高性能内核设计，页帧分配的算法或许会有较大的优化空间。
+// 但是地址空间编号的分配算法而且不需要经常调用，所以可以设计得很简单，普通栈式回收的算法就足够使用了。
+
+#[derive(Debug)]
+pub struct StackAsidAllocator {
+    current: AddressSpaceId,
+    exhausted: bool, 
+    max: AddressSpaceId,
+    recycled: Vec<AddressSpaceId>,
+}
+
+#[derive(Copy, Clone, PartialEq, Eq, Debug)]
+pub struct AsidAllocError;
+
+impl StackAsidAllocator {
+    pub fn new(max_asid: AddressSpaceId) -> Self {
+        StackAsidAllocator { current: DEFAULT_ASID, exhausted: false, max: max_asid, recycled: Vec::new() }
+    }
+
+    pub fn allocate_asid(&mut self) -> Result<AddressSpaceId, AsidAllocError> {
+        if let Some(asid) = self.recycled.pop() {
+            return Ok(asid)
+        }
+        if self.exhausted {
+            return Err(AsidAllocError)
+        }
+        if self.current == self.max {
+            self.exhausted = true;
+            return Ok(self.max)
+        }
+        if let Some(next) = self.current.next_asid(self.max) {
+            let ans = self.current;
+            self.current = next;
+            Ok(ans)
+        } else {
+            Err(AsidAllocError)
+        }
+    }
+
+    pub fn deallocate_asid(&mut self, asid: AddressSpaceId) {
+        if asid.next_asid(self.max).is_none() || self.recycled.iter().find(|&v| {*v == asid}).is_some() {
+            panic!("Asid {:x?} has not been allocated!", asid);
+        }
+        self.recycled.push(asid);
+    }
+}
+
+pub(crate) fn test_asid_alloc() {
+    let max_asid = max_asid();
+    println!("[kernel-asid-test] Platform max asid: {:x?}", max_asid);
+    let mut alloc = StackAsidAllocator::new(max_asid);
+    let a1 = alloc.allocate_asid();
+    assert_eq!(a1, Ok(AddressSpaceId(0)), "first allocation");
+    if max_asid == DEFAULT_ASID {
+        println!("[kernel-asid-test] Asid not implemented; test pass");
+        return;
+    }
+    let a2 = alloc.allocate_asid();
+    assert_eq!(a2, Ok(AddressSpaceId(1)), "second allocation");
+    alloc.deallocate_asid(a1.unwrap());
+    let a3 = alloc.allocate_asid();
+    assert_eq!(a3, Ok(AddressSpaceId(0)), "after free first one, third allocation");
+    for _ in 0..max_asid.0 - 2 {
+        alloc.allocate_asid().unwrap();
+    }
+    let an = alloc.allocate_asid();
+    assert_eq!(an, Ok(max_asid), "last asid");
+    let an = alloc.allocate_asid();
+    assert_eq!(an, Err(AsidAllocError), "when asid exhausted, allocate next");
+    alloc.deallocate_asid(a2.unwrap());
+    let an = alloc.allocate_asid();
+    assert_eq!(an, Ok(AddressSpaceId(1)), "after free second one, allocate next");
+    let an = alloc.allocate_asid();
+    assert_eq!(an, Err(AsidAllocError), "no asid remains, allocate next");
+    println!("[kernel-asid-test] Asid allocation test passed");
 }

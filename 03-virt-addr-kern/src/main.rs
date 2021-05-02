@@ -31,6 +31,7 @@ pub extern "C" fn rust_main(hartid: usize, dtb_pa: usize) -> ! {
     let from = mm::PhysAddr(ekernel as usize).page_number();
     let to = mm::PhysAddr(0x80800000).page_number(); // 暂时对qemu写死
     let mut frame_alloc = mm::StackFrameAllocator::new(from, to);
+    mm::test_asid_alloc();
     println!("[kernel-frame] Frame allocator: {:x?}", frame_alloc);
     executor::init();
     execute();
