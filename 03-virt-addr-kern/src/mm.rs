@@ -274,28 +274,38 @@ impl FrameAllocator for DefaultFrameAllocator {
     }
 }
 
+impl<A: FrameAllocator + ?Sized> FrameAllocator for &A { 
+    fn allocate_frame(&self) -> Result<PhysPageNum, FrameAllocError> {
+        (**self).allocate_frame()
+    }
+    fn deallocate_frame(&self, ppn: PhysPageNum) {
+        (**self).deallocate_frame(ppn)
+    }
+}
+
 // 表示整个页帧内存的所有权
+#[derive(Debug)]
 struct FrameBox<A: FrameAllocator = DefaultFrameAllocator> {
     ppn: PhysPageNum,
     frame_alloc: A,
 }
 
 impl<A: FrameAllocator> FrameBox<A> {
-    // unsafe说明。调用者必须保证以下约定：
-    // 1. ppn只被一个FrameBox拥有，也就是不能破坏所有权约定
-    // 2. 这个ppn是由frame_alloc分配的
-    unsafe fn from_ppn(ppn: PhysPageNum, frame_alloc: A) -> Self {
-        Self { ppn, frame_alloc }
-    }
+    // // unsafe说明。调用者必须保证以下约定：
+    // // 1. ppn只被一个FrameBox拥有，也就是不能破坏所有权约定
+    // // 2. 这个ppn是由frame_alloc分配的
+    // unsafe fn from_ppn(ppn: PhysPageNum, frame_alloc: A) -> Self {
+    //     Self { ppn, frame_alloc }
+    // }
 
     fn try_new_in(mut frame_alloc: A) -> Result<Self, FrameAllocError> {
         let ppn = frame_alloc.allocate_frame()?;
         Ok(Self { ppn, frame_alloc })
     }
 
-    fn phys_page_num(&self) -> PhysPageNum {
-        self.ppn
-    }
+    // fn phys_page_num(&self) -> PhysPageNum {
+    //     self.ppn
+    // }
 }
 
 impl<A: FrameAllocator> Drop for FrameBox<A> {
@@ -305,6 +315,7 @@ impl<A: FrameAllocator> Drop for FrameBox<A> {
 }
 
 // 表示一个分页系统实现的地址空间
+#[derive(Debug)]
 pub struct PagedAddrSpace<A: FrameAllocator = DefaultFrameAllocator> {
     root_frame: FrameBox<A>,
     frames: Vec<FrameBox<A>>,
@@ -312,7 +323,7 @@ pub struct PagedAddrSpace<A: FrameAllocator = DefaultFrameAllocator> {
 
 impl<A: FrameAllocator> PagedAddrSpace<A> {
     // 创建一个空的分页地址空间
-    pub fn try_new_in(mut frame_alloc: A) -> Result<Self, FrameAllocError> {
+    pub fn try_new_in(frame_alloc: A) -> Result<Self, FrameAllocError> {
         let root_frame = FrameBox::try_new_in(frame_alloc)?;
         Ok(Self { root_frame, frames: Vec::new() })
     }
@@ -331,15 +342,15 @@ bitflags::bitflags! {
     }
 }
 
-impl<A: FrameAllocator> PagedAddrSpace<A> {
-    pub fn allocate_map(&mut self, vpn: VirtPageNum, flags: PageFlags) -> Result<(), FrameAllocError> {
-        // 页分配算法，巨难写……留坑
-        todo!()
-    }
-    pub fn unmap(&mut self, vpn: VirtPageNum) {
-        todo!()
-    }
-}
+// impl<A: FrameAllocator> PagedAddrSpace<A> {
+//     pub fn allocate_map(&mut self, vpn: VirtPageNum, flags: PageFlags) -> Result<(), FrameAllocError> {
+//         // 页分配算法，巨难写……留坑
+//         todo!()
+//     }
+//     pub fn unmap(&mut self, vpn: VirtPageNum) {
+//         todo!()
+//     }
+// }
 
 // 切换地址空间，同时需要提供1.地址空间的详细设置 2.地址空间编号
 // 不一定最后的API就是这样的，留个坑

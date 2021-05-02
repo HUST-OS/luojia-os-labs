@@ -30,8 +30,11 @@ pub extern "C" fn rust_main(hartid: usize, dtb_pa: usize) -> ! {
     // 页帧分配器。对整个物理的地址空间来说，无论有多少个核，页帧分配器只有一个。
     let from = mm::PhysAddr(ekernel as usize).page_number();
     let to = mm::PhysAddr(0x80800000).page_number(); // 暂时对qemu写死
-    let mut frame_alloc = mm::StackFrameAllocator::new(from, to);
+    let mut frame_alloc = spin::Mutex::new(mm::StackFrameAllocator::new(from, to));
     println!("[kernel-frame] Frame allocator: {:x?}", frame_alloc);
+    let kernel_addr_space = mm::PagedAddrSpace::try_new_in(&frame_alloc)
+        .expect("allocate page to create kernel paged address space");
+    println!("[kernel] Kernel address space: {:x?}", kernel_addr_space);
     mm::test_asid_alloc();
     let max_asid = mm::max_asid();
     let mut asid_alloc = mm::StackAsidAllocator::new(max_asid);
