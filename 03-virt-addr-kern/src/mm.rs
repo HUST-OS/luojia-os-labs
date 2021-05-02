@@ -415,8 +415,11 @@ bitflags::bitflags! {
     }
 }
 
-// impl<A: FrameAllocator> PagedAddrSpace<A> {
+// impl<M: PageMode, A: FrameAllocator> PagedAddrSpace<M, A> {
 //     pub fn allocate_map(&mut self, vpn: VirtPageNum, flags: PageFlags) -> Result<(), FrameAllocError> {
+//         // for level in M::levels().?? {
+
+//         // }
 //         // 页分配算法，巨难写……留坑
 //         todo!()
 //     }
@@ -427,6 +430,11 @@ bitflags::bitflags! {
 
 // 切换地址空间，同时需要提供1.地址空间的详细设置 2.地址空间编号
 // 不一定最后的API就是这样的，留个坑
-// pub fn activate(addr_space: &PagedAddrSpace, asid: AddressSpaceId) {
+// pub fn activate_paged(addr_space: &PagedAddrSpace, asid: AddressSpaceId) {
 //     todo!()    
 // }
+
+// 自身映射地址空间；虚拟地址等于物理地址
+//
+// 启动这种映射，不需要激活地址空间。
+// pub fn activate_identical() { todo!() }
