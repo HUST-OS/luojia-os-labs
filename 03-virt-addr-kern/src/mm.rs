@@ -364,13 +364,11 @@ pub trait PageMode: Copy {
     // 得到一个虚拟页号各个等级的索引，从高到低
     fn vpn_index(vpn: VirtPageNum, level: PageLevel) -> usize;
     // 通过物理页号，得到页表。unsafe：生命周期由编写者决定
-    unsafe fn unref_ppn<'a>(ppn: PhysPageNum) -> &'a mut PageTable;
-    // 得到一个虚拟页号各个等级的索引，从高到低
-    fn ppn_index(ppn: PhysPageNum, level: PageLevel) -> usize;
+    unsafe fn unref_ppn_mut<'a>(ppn: PhysPageNum) -> &'a mut PageTable;
     // 页式管理模式的页表项类型
     type ModeEntry;
-    // 解释页表项目
-    unsafe fn convert_entry_mut(pte: &mut PageTableEntry) -> &mut Self::ModeEntry;
+    // 解释页表项目；如果项目无效，返回None，可以直接操作pte写入其它数据
+    unsafe fn convert_entry_mut(pte: &mut PageTableEntry) -> Option<&mut Self::ModeEntry>;
 }
 
 // 我们认为今天的分页系统都是分为不同的等级，就是多级页表，这里表示页表的等级是多少
@@ -402,15 +400,12 @@ impl PageMode for Sv39 {
     fn vpn_index(vpn: VirtPageNum, level: PageLevel) -> usize {
         (vpn.0 >> (level.0 * 9)) & 511
     }
-    unsafe fn unref_ppn<'a>(ppn: PhysPageNum) -> &'a mut PageTable {
+    unsafe fn unref_ppn_mut<'a>(ppn: PhysPageNum) -> &'a mut PageTable {
         let pa = ppn.addr_begin();
         &mut *(pa.0 as *mut PageTable)
     }
-    fn ppn_index(ppn: PhysPageNum, level: PageLevel) -> usize {
-        (ppn.0 >> (level.0 * 9)) & 511
-    }
     type ModeEntry = Sv39PageEntry;
-    unsafe fn convert_entry_mut(pte: &mut PageTableEntry) -> &mut Sv39PageEntry {
+    unsafe fn convert_entry_mut(pte: &mut PageTableEntry) -> Option<&mut Sv39PageEntry> {
         let ans = unsafe { &mut *(&mut pte.child_page as *mut _ as *mut Sv39PageEntry) };
         if ans.flags().contains(Flags::V) {
             Some(ans)
@@ -479,7 +474,7 @@ impl<M: PageMode, A: FrameAllocator> PagedAddrSpace<M, A> {
     // unsafe fn entry_mut(&mut self, vpn: VirtPageNum) -> &mut PageTableEntry {
     //     let mut ppn = self.root_frame.phys_page_num();
     //     for level in M::visit_levels() {
-    //         let mut page_table = M::unref_ppn(ppn);
+    //         let mut page_table = M::unref_ppn_mut(ppn);
     //         let vidx = M::vpn_index(vpn, level);
     //         if let Some(pte) = M::convert_entry_mut(&mut page_table.entries[vidx]) {
     //             ppn = pte.ppn();
