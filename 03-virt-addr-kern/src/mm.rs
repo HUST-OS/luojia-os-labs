@@ -63,7 +63,7 @@ impl PhysPageNum {
         PhysAddr(self.0 << M::FRAME_SIZE_BITS)
     }
     pub fn next_page(&self) -> PhysPageNum {
-        // PhysPageNum(self.0.wrapping_add(1) & ((1 << M::PPN_BITS) - 1))
+        // PhysPageNum不处理具体架构的PPN_BITS，它的合法性由具体架构保证
         PhysPageNum(self.0.wrapping_add(1))
     }
     pub fn is_within_range(&self, begin: PhysPageNum, end: PhysPageNum) -> bool {
@@ -350,7 +350,7 @@ pub trait PageMode: Copy {
     // 当前分页模式下，物理页号的位数
     const PPN_BITS: usize;
     // 当前分页模式下，页表的类型
-    type PageTable: core::ops::Index<usize, Output = PageTableEntry> + core::ops::IndexMut<usize>;
+    type PageTable: core::ops::Index<usize, Output = Self::Slot> + core::ops::IndexMut<usize>;
     // 得到这一层大页物理地址最低的对齐要求
     fn get_layout_for_level(level: PageLevel) -> FrameLayout;
     // 得到从高到低的页表等级
@@ -361,22 +361,24 @@ pub trait PageMode: Copy {
     fn visit_levels_from(level: PageLevel) -> &'static [PageLevel];
     // 得到一个虚拟页号各个等级的索引，从高到低
     fn vpn_index(vpn: VirtPageNum, level: PageLevel) -> usize;
-    // 页式管理模式的页表项类型
-    type ModeEntry;
-    // 解释页表项目；如果项目无效，返回None，可以直接操作pte写入其它数据
-    unsafe fn convert_entry_mut(pte: &mut PageTableEntry) -> Result<&mut Self::ModeEntry, &mut PageTableEntry>;
+    // 页式管理模式，有效的页表项类型
+    type Entry;
+    // 页式管理模式，可能有效也可能无效的页表项类型
+    type Slot;
+    // 解释页表项目；如果项目无效，返回None，可以直接操作slot写入其它数据
+    unsafe fn slot_try_get_entry(slot: &mut Self::Slot) -> Result<&mut Self::Entry, &mut Self::Slot>;
     // 创建页表时，把它的所有条目设置为无效条目
-    unsafe fn fill_page_table_invalid(table: &mut Self::PageTable);
+    unsafe fn init_page_table(table: &mut Self::PageTable);
     // 页表项的设置
     type Flags : Clone;
     // 写数据，建立一个到子页表的页表项
-    fn pte_set_child(pte: &mut PageTableEntry, ppn: PhysPageNum);
+    fn slot_set_child(slot: &mut Self::Slot, ppn: PhysPageNum);
     // 写数据，建立一个到内存地址的页表项
-    fn pte_set_mapping(pte: &mut PageTableEntry, ppn: PhysPageNum, flags: Self::Flags);
+    fn slot_set_mapping(slot: &mut Self::Slot, ppn: PhysPageNum, flags: Self::Flags);
     // 写数据到页表项目，说明这是一个叶子节点
-    fn write_ppn_flags(entry: &mut Self::ModeEntry, ppn: PhysPageNum, flags: Self::Flags);
+    fn entry_write_ppn_flags(entry: &mut Self::Entry, ppn: PhysPageNum, flags: Self::Flags);
     // 得到一个页表项目包含的物理页号
-    fn get_ppn_from_entry(entry: &mut Self::ModeEntry) -> PhysPageNum;
+    fn entry_get_ppn(entry: &mut Self::Entry) -> PhysPageNum;
 }
 
 // 我们认为今天的分页系统都是分为不同的等级，就是多级页表，这里表示页表的等级是多少
@@ -429,51 +431,57 @@ impl PageMode for Sv39 {
     fn vpn_index(vpn: VirtPageNum, level: PageLevel) -> usize {
         (vpn.0 >> (level.0 * 9)) & 511
     }
-    type ModeEntry = Sv39PageEntry;
-    unsafe fn convert_entry_mut(pte: &mut PageTableEntry) -> Result<&mut Self::ModeEntry, &mut PageTableEntry> {
-        let ans = &mut *(&mut pte.child_page as *mut _ as *mut Sv39PageEntry);
+    type Entry = Sv39PageEntry;
+    type Slot = Sv39PageSlot;
+    unsafe fn slot_try_get_entry(slot: &mut Sv39PageSlot) -> Result<&mut Sv39PageEntry, &mut Sv39PageSlot> {
+        let ans = &mut *(slot as *mut _ as *mut Sv39PageEntry);
         if ans.flags().contains(Sv39Flags::V) {
             Ok(ans)
         } else {
-            Err(pte)
+            Err(slot)
         }
     }
-    unsafe fn fill_page_table_invalid(table: &mut Self::PageTable) {
+    unsafe fn init_page_table(table: &mut Self::PageTable) {
         table.entries = core::mem::MaybeUninit::zeroed().assume_init(); // 全零
     }
     type Flags = Sv39Flags;
-    fn pte_set_child(pte: &mut PageTableEntry, ppn: PhysPageNum) {
-        let ans = unsafe { &mut *(&mut pte.child_page as *mut _ as *mut Sv39PageEntry) };
+    fn slot_set_child(slot: &mut Sv39PageSlot, ppn: PhysPageNum) {
+        let ans = unsafe { &mut *(slot as *mut _ as *mut Sv39PageEntry) };
         ans.write_ppn_flags(ppn, Sv39Flags::V); // V=1, R=W=X=0
     }
-    fn pte_set_mapping(pte: &mut PageTableEntry, ppn: PhysPageNum, flags: Sv39Flags) {
-        let ans = unsafe { &mut *(&mut pte.child_page as *mut _ as *mut Sv39PageEntry) };
+    fn slot_set_mapping(slot: &mut Sv39PageSlot, ppn: PhysPageNum, flags: Sv39Flags) {
+        let ans = unsafe { &mut *(slot as *mut _ as *mut Sv39PageEntry) };
         ans.write_ppn_flags(ppn, Sv39Flags::V | flags);
     }
-    fn write_ppn_flags(entry: &mut Sv39PageEntry, ppn: PhysPageNum, flags: Sv39Flags) {
+    fn entry_write_ppn_flags(entry: &mut Sv39PageEntry, ppn: PhysPageNum, flags: Sv39Flags) {
         entry.write_ppn_flags(ppn, flags);
     }
-    fn get_ppn_from_entry(entry: &mut Sv39PageEntry) -> PhysPageNum {
+    fn entry_get_ppn(entry: &mut Sv39PageEntry) -> PhysPageNum {
         entry.ppn()
     }
 }
 
 #[repr(C)]
 pub struct Sv39PageTable {
-    entries: [PageTableEntry; 512], // todo: other modes
+    entries: [Sv39PageSlot; 512], // todo: other modes
 }
 
 impl core::ops::Index<usize> for Sv39PageTable {
-    type Output = PageTableEntry;
-    fn index(&self, idx: usize) -> &PageTableEntry {
+    type Output = Sv39PageSlot;
+    fn index(&self, idx: usize) -> &Sv39PageSlot {
         &self.entries[idx]
     }
 }
 
 impl core::ops::IndexMut<usize> for Sv39PageTable {
-    fn index_mut(&mut self, idx: usize) -> &mut PageTableEntry {
+    fn index_mut(&mut self, idx: usize) -> &mut Sv39PageSlot {
         &mut self.entries[idx]
     }
+}
+
+#[repr(C)]
+pub struct Sv39PageSlot {
+    bits: usize,
 }
 
 #[repr(C)]
@@ -540,7 +548,7 @@ bitflags::bitflags! {
 
 #[inline] unsafe fn fill_frame_with_all_invalid_page_table<A: FrameAllocator, M: PageMode>(b: &mut FrameBox<A>) {
     let a = &mut *(b.ppn.addr_begin::<M>().0 as *mut M::PageTable);
-    M::fill_page_table_invalid(a);
+    M::init_page_table(a);
 }
 
 impl<M: PageMode, A: FrameAllocator + Clone> PagedAddrSpace<M, A> {    
@@ -550,11 +558,11 @@ impl<M: PageMode, A: FrameAllocator + Clone> PagedAddrSpace<M, A> {
         for &level in M::visit_levels_before(entry_level) {
             let page_table = unref_ppn_mut::<M>(ppn);
             let vidx = M::vpn_index(vpn_start, level);
-            match M::convert_entry_mut(&mut page_table[vidx]) {
-                Ok(entry) => ppn = M::get_ppn_from_entry(entry),
-                Err(mut pte) => {  // 需要一个内部页表，这里的页表项却没有数据，我们需要填写数据
+            match M::slot_try_get_entry(&mut page_table[vidx]) {
+                Ok(entry) => ppn = M::entry_get_ppn(entry),
+                Err(mut slot) => {  // 需要一个内部页表，这里的页表项却没有数据，我们需要填写数据
                     let frame_box = FrameBox::try_new_in(self.frame_alloc.clone())?;
-                    M::pte_set_child(&mut pte, frame_box.phys_page_num());
+                    M::slot_set_child(&mut slot, frame_box.phys_page_num());
                     self.frames.push(frame_box);
                 }
             }
@@ -570,9 +578,9 @@ impl<M: PageMode, A: FrameAllocator + Clone> PagedAddrSpace<M, A> {
             for vidx in M::vpn_index(vpn_range.start, page_level)..M::vpn_index(vpn_range.end, page_level) {
                 let this_ppn = PhysPageNum(ppn.0 + vpn_range.start.0 - vpn.0 + M::get_layout_for_level(page_level).frame_align() * vidx);
                 // println!("Vidx {} -> Ppn {:x?}", vidx, this_ppn);
-                match unsafe { M::convert_entry_mut(&mut table[vidx]) } {
+                match unsafe { M::slot_try_get_entry(&mut table[vidx]) } {
                     Ok(_entry) => panic!("Already allocated"),
-                    Err(pte) => M::pte_set_mapping(pte, this_ppn, flags.clone())
+                    Err(slot) => M::slot_set_mapping(slot, this_ppn, flags.clone())
                 }
             }
         }
@@ -628,12 +636,6 @@ impl<M> Iterator for MapPairs<M> {
     fn next(&mut self) -> Option<Self::Item> {
         self.ans_iter.next()
     }
-}
-
-#[repr(C)]
-pub union PageTableEntry {
-    child_page: usize,
-    unused_data: usize,
 }
 
 pub(crate) fn test_map_solve() {
