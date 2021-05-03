@@ -65,9 +65,9 @@ pub struct VirtAddr(pub usize);
 pub struct PhysPageNum(usize);
 
 impl PhysPageNum {
-    // pub fn addr_begin(&self) -> PhysAddr {
-    //     PhysAddr(self.0 << PAGE_SIZE_BITS)
-    // }
+    pub fn addr_begin(&self) -> PhysAddr {
+        PhysAddr(self.0 << PAGE_SIZE_BITS)
+    }
     pub fn next_page(&self) -> PhysPageNum {
         PhysPageNum(self.0.wrapping_add(1) & PPN_VALID_MASK)
     }
@@ -328,9 +328,9 @@ impl<A: FrameAllocator> FrameBox<A> {
         Self { ppn, frame_alloc }
     }
 
-    // fn phys_page_num(&self) -> PhysPageNum {
-    //     self.ppn
-    // }
+    fn phys_page_num(&self) -> PhysPageNum {
+        self.ppn
+    }
 }
 
 impl<A: FrameAllocator> Drop for FrameBox<A> {
@@ -353,12 +353,24 @@ pub struct Sv39;
 //
 // 如果虚拟内存的模式是直接映射或者线性映射，这将不属于分页模式的范围。应当混合使用其它的地址空间，综合成为更大的地址空间。
 pub trait PageMode: Copy {
+    // 得到这一层页表（在物理内存上）最低的对齐要求
     fn get_layout_for_level(level: PageLevel) -> FrameLayout;
     // 得到根页表的等级。按如下方法计算：如果虚拟地址包含vpn[n]、vpn[n-1]...vpn[0]，那么根页表等级为n+1。
     fn root_level() -> PageLevel;
     // 创建一个拥有所有权的页帧，需要注意的是，必须按照level的要求对齐。
     fn create_frame_box<A: FrameAllocator>(level: PageLevel, frame_alloc: A) -> Result<FrameBox<A>, FrameAllocError>;
-    // todo: 分页算法 
+    // 得到从高到低的页表等级
+    fn visit_levels() -> [PageLevel; 3];
+    // 得到一个虚拟页号各个等级的索引，从高到低
+    fn vpn_index(vpn: VirtPageNum, level: PageLevel) -> usize;
+    // 通过物理页号，得到页表。unsafe：生命周期由编写者决定
+    unsafe fn unref_ppn<'a>(ppn: PhysPageNum) -> &'a mut PageTable;
+    // 得到一个虚拟页号各个等级的索引，从高到低
+    fn ppn_index(ppn: PhysPageNum, level: PageLevel) -> usize;
+    // 页式管理模式的页表项类型
+    type ModeEntry;
+    // 解释页表项目
+    unsafe fn convert_entry_mut(pte: &mut PageTableEntry) -> &mut Self::ModeEntry;
 }
 
 // 我们认为今天的分页系统都是分为不同的等级，就是多级页表，这里表示页表的等级是多少
@@ -384,6 +396,50 @@ impl PageMode for Sv39 {
         let ppn = frame_alloc.allocate_frame(layout)?;
         Ok(unsafe { FrameBox::from_ppn(ppn, frame_alloc) })
     }
+    fn visit_levels() -> [PageLevel; 3] {
+        [PageLevel(2), PageLevel(1), PageLevel(0)]
+    }
+    fn vpn_index(vpn: VirtPageNum, level: PageLevel) -> usize {
+        (vpn.0 >> (level.0 * 9)) & 511
+    }
+    unsafe fn unref_ppn<'a>(ppn: PhysPageNum) -> &'a mut PageTable {
+        let pa = ppn.addr_begin();
+        &mut *(pa.0 as *mut PageTable)
+    }
+    fn ppn_index(ppn: PhysPageNum, level: PageLevel) -> usize {
+        (ppn.0 >> (level.0 * 9)) & 511
+    }
+    type ModeEntry = Sv39PageEntry;
+    unsafe fn convert_entry_mut(pte: &mut PageTableEntry) -> &mut Sv39PageEntry {
+        let ans = unsafe { &mut *(&mut pte.child_page as *mut _ as *mut Sv39PageEntry) };
+        if ans.flags().contains(Flags::V) {
+            Some(ans)
+        } else {
+            None
+        }
+    }
+}
+
+#[repr(C)]
+pub struct Sv39PageEntry {
+    bits: usize,
+}
+
+use bit_field::BitField;
+
+impl Sv39PageEntry {
+    #[inline]
+    pub fn ppn(&self) -> PhysPageNum {
+        PhysPageNum(self.bits.get_bits(8..54))
+    }
+    #[inline]
+    pub fn flags(&self) -> Flags {
+        Flags::from_bits_truncate(self.bits.get_bits(0..8) as u8)
+    }
+    #[inline]
+    pub fn write_ppn_flags(&mut self, ppn: PhysPageNum, flags: Flags) {
+        self.bits = (ppn.0 << 8) | flags.bits() as usize
+    }
 }
 
 // 表示一个分页系统实现的地址空间
@@ -397,17 +453,17 @@ pub struct PagedAddrSpace<M: PageMode, A: FrameAllocator = DefaultFrameAllocator
     page_mode: M,
 }
 
-impl<M: PageMode, A: FrameAllocator> PagedAddrSpace<M, A> {
+impl<M: PageMode, A: FrameAllocator + Clone> PagedAddrSpace<M, A> {
     // 创建一个空的分页地址空间
     pub fn try_new_in(page_mode: M, frame_alloc: A) -> Result<Self, FrameAllocError> {
         // 这里直接新建了一个最低的layout，我们认为根页帧只需要对齐到帧就可以了
-        let root_frame = M::create_frame_box(M::root_level(), frame_alloc)?;
+        let root_frame = M::create_frame_box(M::root_level(), frame_alloc.clone())?;
         Ok(Self { root_frame, frames: Vec::new(), frame_alloc, page_mode })
     }
 }
 
 bitflags::bitflags! {
-    pub struct PageFlags: u8 {
+    pub struct Flags: u8 {
         const V = 1 << 0;
         const R = 1 << 1;
         const W = 1 << 2;
@@ -419,18 +475,31 @@ bitflags::bitflags! {
     }
 }
 
-// impl<M: PageMode, A: FrameAllocator> PagedAddrSpace<M, A> {
-//     pub fn allocate_map(&mut self, vpn: VirtPageNum, flags: PageFlags) -> Result<(), FrameAllocError> {
-//         // for level in M::levels().?? {
+impl<M: PageMode, A: FrameAllocator> PagedAddrSpace<M, A> {
+    // unsafe fn entry_mut(&mut self, vpn: VirtPageNum) -> &mut PageTableEntry {
+    //     let mut ppn = self.root_frame.phys_page_num();
+    //     for level in M::visit_levels() {
+    //         let mut page_table = M::unref_ppn(ppn);
+    //         let vidx = M::vpn_index(vpn, level);
+    //         if let Some(pte) = M::convert_entry_mut(&mut page_table.entries[vidx]) {
+    //             ppn = pte.ppn();
+    //         } else {
+    //             return VacantEntry;
+    //         }
+    //     }
+    //     return Found(ppn)
+    // }
+    // pub fn allocate_map(&mut self, vpn: VirtPageNum, flags: PageFlags) -> Result<(), FrameAllocError> {
+    //     // for level in M::levels().?? {
 
-//         // }
-//         // 页分配算法，巨难写……留坑
-//         todo!()
-//     }
-//     pub fn unmap(&mut self, vpn: VirtPageNum) {
-//         todo!()
-//     }
-// }
+    //     // }
+    //     // 页分配算法，巨难写……留坑
+    //     todo!()
+    // }
+    // pub fn unmap(&mut self, vpn: VirtPageNum) {
+    //     todo!()
+    // }
+}
 
 #[repr(C)]
 pub struct PageTable {
@@ -439,12 +508,8 @@ pub struct PageTable {
 
 #[repr(C)]
 pub union PageTableEntry {
-    value: usize,
-    unused: usize,
-}
-
-pub struct RiscvPageEntry {
-
+    child_page: usize,
+    unused_data: usize,
 }
 
 // 切换地址空间，同时需要提供1.地址空间的详细设置 2.地址空间编号

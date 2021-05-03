@@ -269,6 +269,7 @@ dependencies = [
 name = "virt-addr-kern"
 version = "0.1.0"
 dependencies = [
+ "bit_field",
  "bitflags",
  "buddy_system_allocator 0.8.0",
  "lazy_static",
