@@ -360,13 +360,17 @@ pub trait PageMode: Copy {
     // 创建一个拥有所有权的页帧，需要注意的是，必须按照level的要求对齐。
     fn create_frame_box<A: FrameAllocator>(level: PageLevel, frame_alloc: A) -> Result<FrameBox<A>, FrameAllocError>;
     // 得到从高到低的页表等级
-    fn visit_levels() -> [PageLevel; 3];
+    fn visit_levels() -> &'static [PageLevel];
     // 得到一个虚拟页号各个等级的索引，从高到低
     fn vpn_index(vpn: VirtPageNum, level: PageLevel) -> usize;
     // 页式管理模式的页表项类型
     type ModeEntry;
     // 解释页表项目；如果项目无效，返回None，可以直接操作pte写入其它数据
     unsafe fn convert_entry_mut(pte: &mut PageTableEntry) -> Option<&mut Self::ModeEntry>;
+    // 页表项的设置
+    type Flags;
+    // 写数据到页表项目
+    fn write_ppn_flags(entry: &mut Self::ModeEntry, ppn: PhysPageNum, flags: Self::Flags);
 }
 
 // 我们认为今天的分页系统都是分为不同的等级，就是多级页表，这里表示页表的等级是多少
@@ -392,8 +396,8 @@ impl PageMode for Sv39 {
         let ppn = frame_alloc.allocate_frame(layout)?;
         Ok(unsafe { FrameBox::from_ppn(ppn, frame_alloc) })
     }
-    fn visit_levels() -> [PageLevel; 3] {
-        [PageLevel(2), PageLevel(1), PageLevel(0)]
+    fn visit_levels() -> &'static [PageLevel] {
+        &[PageLevel(2), PageLevel(1), PageLevel(0)]
     }
     fn vpn_index(vpn: VirtPageNum, level: PageLevel) -> usize {
         (vpn.0 >> (level.0 * 9)) & 511
@@ -401,11 +405,15 @@ impl PageMode for Sv39 {
     type ModeEntry = Sv39PageEntry;
     unsafe fn convert_entry_mut(pte: &mut PageTableEntry) -> Option<&mut Sv39PageEntry> {
         let ans = unsafe { &mut *(&mut pte.child_page as *mut _ as *mut Sv39PageEntry) };
-        if ans.flags().contains(Flags::V) {
+        if ans.flags().contains(Sv39Flags::V) {
             Some(ans)
         } else {
             None
         }
+    }
+    type Flags = Sv39Flags;
+    fn write_ppn_flags(entry: &mut Sv39PageEntry, ppn: PhysPageNum, flags: Self::Flags) {
+        entry.write_ppn_flags(ppn, flags);
     }
 }
 
@@ -422,11 +430,11 @@ impl Sv39PageEntry {
         PhysPageNum(self.bits.get_bits(8..54))
     }
     #[inline]
-    pub fn flags(&self) -> Flags {
-        Flags::from_bits_truncate(self.bits.get_bits(0..8) as u8)
+    pub fn flags(&self) -> Sv39Flags {
+        Sv39Flags::from_bits_truncate(self.bits.get_bits(0..8) as u8)
     }
     #[inline]
-    pub fn write_ppn_flags(&mut self, ppn: PhysPageNum, flags: Flags) {
+    pub fn write_ppn_flags(&mut self, ppn: PhysPageNum, flags: Sv39Flags) {
         self.bits = (ppn.0 << 8) | flags.bits() as usize
     }
 }
@@ -452,7 +460,7 @@ impl<M: PageMode, A: FrameAllocator + Clone> PagedAddrSpace<M, A> {
 }
 
 bitflags::bitflags! {
-    pub struct Flags: u8 {
+    pub struct Sv39Flags: u8 {
         const V = 1 << 0;
         const R = 1 << 1;
         const W = 1 << 2;
