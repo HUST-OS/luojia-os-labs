@@ -433,9 +433,9 @@ impl PageMode for Sv39 {
     }
     fn vpn_level_index(vpn: VirtPageNum, level: PageLevel, idx: usize) -> VirtPageNum {
         VirtPageNum(match level.0 {
-            0 => (vpn.0 / 512) * 512 + idx,
-            1 => (vpn.0 / (512 * 512)) * (512 * 512) + idx * 512,
-            2 => (vpn.0 / (512 * 512 * 512)) * (512 * 512 * 512) + idx * 512 * 512,
+            0 => (vpn.0 & !((1 << 9) - 1)) + idx,
+            1 => (vpn.0 & !((1 << 18) - 1)) + (idx << 9),
+            2 => (vpn.0 & !((1 << 44) - 1)) + (idx << 18),
             _ => unimplemented!("this level does not exist on Sv39"),
         })
     }
