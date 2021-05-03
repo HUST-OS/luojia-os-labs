@@ -42,8 +42,8 @@ const PPN_VALID_MASK: usize = (1 << (PADDR_SPACE_BITS - PAGE_SIZE_BITS)) - 1;
 pub struct PhysAddr(pub usize);
 
 impl PhysAddr {
-    pub fn page_number(&self) -> PhysPageNum { 
-        PhysPageNum(self.0 >> PAGE_SIZE_BITS)
+    pub fn page_number<M: PageMode>(&self) -> PhysPageNum { 
+        PhysPageNum(self.0 >> M::PAGE_SIZE_BITS)
     }
     // pub fn page_offset(&self) -> usize { 
     //     self.0 & (PAGE_SIZE - 1)
@@ -54,8 +54,8 @@ impl PhysAddr {
 pub struct VirtAddr(pub usize);
 
 impl VirtAddr {
-    pub fn page_number(&self) -> VirtPageNum { 
-        VirtPageNum(self.0 >> PAGE_SIZE_BITS)
+    pub fn page_number<M: PageMode>(&self) -> VirtPageNum { 
+        VirtPageNum(self.0 >> M::PAGE_SIZE_BITS)
     }
 //     pub fn page_offset(&self) -> usize { 
 //         self.0 & (PAGE_SIZE - 1)
@@ -152,8 +152,8 @@ impl FrameLayout {
 pub struct FrameLayoutError;
 
 pub(crate) fn test_frame_alloc() {
-    let from = PhysAddr(0x80_000_000).page_number();
-    let to = PhysAddr(0x100_000_000).page_number();
+    let from = PhysPageNum(0x80000);
+    let to = PhysPageNum(0x100000);
     let mut alloc = StackFrameAllocator::new(from, to);
     let f1 = alloc.allocate_frame();
     assert_eq!(f1, Ok(PhysPageNum(0x80000)), "first allocation");
@@ -351,6 +351,7 @@ pub struct Sv39;
 //
 // 如果虚拟内存的模式是直接映射或者线性映射，这将不属于分页模式的范围。应当混合使用其它的地址空间，综合成为更大的地址空间。
 pub trait PageMode: Copy {
+    const PAGE_SIZE_BITS: usize;
     // 得到这一层大页物理地址最低的对齐要求
     fn get_layout_for_level(level: PageLevel) -> FrameLayout;
     // 得到从高到低的页表等级
@@ -391,6 +392,8 @@ impl PageLevel {
 }
 
 impl PageMode for Sv39 {
+    const PAGE_SIZE_BITS: usize = 12;
+    
     fn get_layout_for_level(level: PageLevel) -> FrameLayout {
         unsafe { match level.0 {
             0 => FrameLayout::new_unchecked(1), // 4K页，最低层页

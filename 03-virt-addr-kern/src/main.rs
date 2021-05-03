@@ -29,8 +29,8 @@ pub extern "C" fn rust_main(hartid: usize, dtb_pa: usize) -> ! {
     mm::heap_init();
     mm::test_frame_alloc();
     // 页帧分配器。对整个物理的地址空间来说，无论有多少个核，页帧分配器只有一个。
-    let from = mm::PhysAddr(ekernel as usize).page_number();
-    let to = mm::PhysAddr(0x80800000).page_number(); // 暂时对qemu写死
+    let from = mm::PhysAddr(ekernel as usize).page_number::<mm::Sv39>();
+    let to = mm::PhysAddr(0x80800000).page_number::<mm::Sv39>(); // 暂时对qemu写死
     let frame_alloc = spin::Mutex::new(mm::StackFrameAllocator::new(from, to));
     println!("[kernel-frame] Frame allocator: {:x?}", frame_alloc);
     let mut kernel_addr_space = mm::PagedAddrSpace::try_new_in(mm::Sv39, &frame_alloc)
@@ -38,8 +38,8 @@ pub extern "C" fn rust_main(hartid: usize, dtb_pa: usize) -> ! {
     println!("[kernel] Kernel address space: {:x?}", kernel_addr_space);
     mm::test_map_solve();
     kernel_addr_space.allocate_map(
-        mm::VirtAddr(0x80000000).page_number(), 
-        mm::PhysAddr(0x80000000).page_number(), 
+        mm::VirtAddr(0x80000000).page_number::<mm::Sv39>(), 
+        mm::PhysAddr(0x80000000).page_number::<mm::Sv39>(), 
         1024,
         mm::Sv39Flags::R | mm::Sv39Flags::W | mm::Sv39Flags::X
     ).expect("allocate one mapped space");
