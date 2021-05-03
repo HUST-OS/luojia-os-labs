@@ -2,6 +2,7 @@
 
 use alloc::alloc::Layout;
 use buddy_system_allocator::LockedHeap;
+use core::ops::Range;
 
 const KERNEL_HEAP_SIZE: usize = 64 * 1024;
 
@@ -517,50 +518,59 @@ impl<M: PageMode, A: FrameAllocator> PagedAddrSpace<M, A> {
     //     }
     //     return AddrSpaceEntry::Occupied(ppn)
     // }
-    pub fn allocate_map(&mut self, vpn: VirtPageNum, ppn: PhysPageNum, n: usize)//, flags: M::Flags) 
-        -> Result<(), FrameAllocError> 
-    {
+    // pub fn get_map_pairs(&mut self, vpn: VirtPageNum, ppn: PhysPageNum, n: usize) -> MapPairs {
+    //     // 页分配算法，巨难写……留坑
+    //     Ok(())
+    // }
+    // pub fn unmap(&mut self, vpn: VirtPageNum) {
+    //     todo!()
+    // }
+}
+
+#[derive(Debug)]
+pub struct MapPairs<M> {
+    ans_iter: alloc::vec::IntoIter<(PageLevel, Range<VirtPageNum>)>,
+    mode: M,
+}
+
+impl<M: PageMode> MapPairs<M> {
+    pub fn solve(vpn: VirtPageNum, ppn: PhysPageNum, n: usize, mode: M) -> Self {
+        let mut ans = Vec::new();
         for &i in M::visit_levels_until(PageLevel::leaf_level()) {
             let align = M::get_layout_for_level(i).frame_align();
-            println!("[kernel-space-test] i = {}, align = {}, vpn = {}, ppn = {}, n = {}", 
-                i.0, align, vpn.0, ppn.0, n);
             if (vpn.0 - ppn.0) % align != 0 || n < align {
                 continue;
             }
-            // map(2, ve2, vs2, ve2-v+p);
-            // map(1, ve1, ve2, ve1-v+p); map(1, vs2, vs1, vs2-v+p);
-            // map(0, v, ve1, p); map(0, vs1, v+n, vs1-v+p);
-            // map(1, ve1, vs1, ve1-v+p);
-            // map(0, v, ve1, p); map(0, vs1, v+n, vs1-v+p);
-            // map(0, v, v+n, p);
             let (mut ve_prev, mut vs_prev) = (None, None);
             for &j in M::visit_levels_from(i) {
                 let align_cur = M::get_layout_for_level(j).frame_align();
                 let ve_cur = align_cur * ((vpn.0 + align_cur - 1) / align_cur); // a * roundup(v / a)
                 let vs_cur = align_cur * ((vpn.0 + n) / align_cur); // a * rounddown((v+n) / a)
-                println!("[kernel-space-test] j = {}, align_cur = {}, ve_{} = {}, vs_{} = {}", j.0, align_cur, j.0, ve_cur, j.0, vs_cur);
                 if let (Some(ve_prev), Some(vs_prev)) = (ve_prev, vs_prev) {
-                    println!("[kernel-space-test] map({}, {}, {}, {})", j.0, ve_cur, ve_prev, ve_cur - vpn.0 + ppn.0);
-                    println!("[kernel-space-test] map({}, {}, {}, {})", j.0, vs_prev, vs_cur, vs_prev - vpn.0 + ppn.0);
-                    // self.map(j, ve_cur, ve_prev, ve_cur-v+p);
-                    // self.map(j, vs_prev, vs_cur, vs_prev-v+p);
+                    if ve_cur != ve_prev {
+                        ans.push((j, VirtPageNum(ve_cur)..VirtPageNum(ve_prev)));
+                    }
+                    if vs_prev != vs_cur {
+                        ans.push((j, VirtPageNum(vs_prev)..VirtPageNum(vs_cur)));
+                    }
                 } else {
-                    println!("[kernel-space-test] map({}, {}, {}, {})", j.0, ve_cur, vs_cur, ve_cur - vpn.0 + ppn.0);
-                    // self.map(j, ve_cur, vs_cur, ve_cur-v+p);
+                    if ve_cur != vs_cur { 
+                        ans.push((j, VirtPageNum(ve_cur)..VirtPageNum(vs_cur)));
+                    }
                 }
                 (ve_prev, vs_prev) = (Some(ve_cur), Some(vs_cur));
             }
-            // let frame_box = FrameBox::try_new_in(self.frame_alloc)?;
-            
             break;
-            //
         } 
-        // 页分配算法，巨难写……留坑
-        Ok(())
+        Self { ans_iter: ans.into_iter(), mode }
     }
-    // pub fn unmap(&mut self, vpn: VirtPageNum) {
-    //     todo!()
-    // }
+}
+
+impl<M> Iterator for MapPairs<M> {
+    type Item = (PageLevel, Range<VirtPageNum>);
+    fn next(&mut self) -> Option<Self::Item> {
+        self.ans_iter.next()
+    }
 }
 
 #[repr(C)]
@@ -574,13 +584,21 @@ pub union PageTableEntry {
     unused_data: usize,
 }
 
-pub(crate) fn test_page_alloc() {
-    let from = PhysAddr(0x80_000_000).page_number();
-    let to = PhysAddr(0x100_000_000).page_number();
-    let frame_alloc = spin::Mutex::new(StackFrameAllocator::new(from, to));
-    let mut space = PagedAddrSpace::try_new_in(Sv39, &frame_alloc).unwrap();
-    println!("[kernel-space-test] Space: {:x?}", space);
-    space.allocate_map(VirtPageNum(0x90_000), PhysPageNum(0x50_000), 666666).unwrap();
+pub(crate) fn test_map_solve() {
+    let pairs = MapPairs::solve(VirtPageNum(0x90_000), PhysPageNum(0x50_000), 666666, Sv39).collect::<Vec<_>>();
+    assert_eq!(pairs, [
+        (PageLevel(2), VirtPageNum(786432)..VirtPageNum(1048576)), 
+        (PageLevel(1), VirtPageNum(589824)..VirtPageNum(786432)), 
+        (PageLevel(1), VirtPageNum(1048576)..VirtPageNum(1256448)), 
+        (PageLevel(0), VirtPageNum(1256448)..VirtPageNum(1256490))
+    ]);
+    let pairs = MapPairs::solve(VirtPageNum(0x90_001), PhysPageNum(0x50_001), 77777, Sv39).collect::<Vec<_>>();
+    assert_eq!(pairs, [
+        (PageLevel(1), VirtPageNum(590336)..VirtPageNum(667136)), 
+        (PageLevel(0), VirtPageNum(589825)..VirtPageNum(590336)), 
+        (PageLevel(0), VirtPageNum(667136)..VirtPageNum(667602))
+    ]);
+    println!("[kernel-map-solve] Map solver test passed");
 }
 
 // 切换地址空间，同时需要提供1.地址空间的详细设置 2.地址空间编号
