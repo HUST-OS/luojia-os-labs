@@ -363,8 +363,6 @@ pub trait PageMode: Copy {
     fn visit_levels() -> [PageLevel; 3];
     // 得到一个虚拟页号各个等级的索引，从高到低
     fn vpn_index(vpn: VirtPageNum, level: PageLevel) -> usize;
-    // 通过物理页号，得到页表。unsafe：生命周期由编写者决定
-    unsafe fn unref_ppn_mut<'a>(ppn: PhysPageNum) -> &'a mut PageTable;
     // 页式管理模式的页表项类型
     type ModeEntry;
     // 解释页表项目；如果项目无效，返回None，可以直接操作pte写入其它数据
@@ -399,10 +397,6 @@ impl PageMode for Sv39 {
     }
     fn vpn_index(vpn: VirtPageNum, level: PageLevel) -> usize {
         (vpn.0 >> (level.0 * 9)) & 511
-    }
-    unsafe fn unref_ppn_mut<'a>(ppn: PhysPageNum) -> &'a mut PageTable {
-        let pa = ppn.addr_begin();
-        &mut *(pa.0 as *mut PageTable)
     }
     type ModeEntry = Sv39PageEntry;
     unsafe fn convert_entry_mut(pte: &mut PageTableEntry) -> Option<&mut Sv39PageEntry> {
@@ -468,6 +462,11 @@ bitflags::bitflags! {
         const A = 1 << 6;
         const D = 1 << 7;
     }
+}
+
+unsafe fn unref_ppn_mut<'a>(ppn: PhysPageNum) -> &'a mut PageTable {
+    let pa = ppn.addr_begin();
+    &mut *(pa.0 as *mut PageTable)
 }
 
 impl<M: PageMode, A: FrameAllocator> PagedAddrSpace<M, A> {
