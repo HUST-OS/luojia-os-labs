@@ -106,10 +106,7 @@ impl StackFrameAllocator {
     pub fn new(start: PhysPageNum, end: PhysPageNum) -> Self {
         StackFrameAllocator { current: start, end, recycled: Vec::new() }
     }
-    pub fn allocate_frame(&mut self, layout: FrameLayout) -> Result<PhysPageNum, FrameAllocError> {
-        if layout.frame_align() != 1 {
-            return Err(FrameAllocError) // 暂不支持大页对齐分配
-        }
+    pub fn allocate_frame(&mut self) -> Result<PhysPageNum, FrameAllocError> {
         if let Some(ppn) = self.recycled.pop() {
             Ok(ppn)
         } else {
@@ -160,13 +157,12 @@ pub(crate) fn test_frame_alloc() {
     let from = PhysAddr(0x80_000_000).page_number();
     let to = PhysAddr(0x100_000_000).page_number();
     let mut alloc = StackFrameAllocator::new(from, to);
-    let layout_one = unsafe { FrameLayout::new_unchecked(1) };
-    let f1 = alloc.allocate_frame(layout_one);
+    let f1 = alloc.allocate_frame();
     assert_eq!(f1, Ok(PhysPageNum(0x80000)), "first allocation");
-    let f2 = alloc.allocate_frame(layout_one);
+    let f2 = alloc.allocate_frame();
     assert_eq!(f2, Ok(PhysPageNum(0x80001)), "second allocation");
     alloc.deallocate_frame(f1.unwrap());
-    let f3 = alloc.allocate_frame(layout_one);
+    let f3 = alloc.allocate_frame();
     assert_eq!(f3, Ok(PhysPageNum(0x80000)), "after free first, third allocation");
     println!("[kernel-frame-test] Frame allocator test passed");
 }
@@ -288,16 +284,15 @@ pub(crate) fn test_asid_alloc() {
 }
 
 pub trait FrameAllocator {
-    fn allocate_frame(&self, layout: FrameLayout) -> Result<PhysPageNum, FrameAllocError>;
-    // 释放的时候不提供FrameLayout。我们认为所有已经分配的ppn都不可能重叠，因为帧的大小不为零，所以由ppn可以唯一地确定已分配地帧
+    fn allocate_frame(&self) -> Result<PhysPageNum, FrameAllocError>;
     fn deallocate_frame(&self, ppn: PhysPageNum);
 }
 
 pub type DefaultFrameAllocator = spin::Mutex<StackFrameAllocator>;
 
 impl FrameAllocator for DefaultFrameAllocator {
-    fn allocate_frame(&self, layout: FrameLayout) -> Result<PhysPageNum, FrameAllocError> {
-        self.lock().allocate_frame(layout)
+    fn allocate_frame(&self) -> Result<PhysPageNum, FrameAllocError> {
+        self.lock().allocate_frame()
     }
     fn deallocate_frame(&self, ppn: PhysPageNum) {
         self.lock().deallocate_frame(ppn)
@@ -305,8 +300,8 @@ impl FrameAllocator for DefaultFrameAllocator {
 }
 
 impl<A: FrameAllocator + ?Sized> FrameAllocator for &A { 
-    fn allocate_frame(&self, layout: FrameLayout) -> Result<PhysPageNum, FrameAllocError> {
-        (**self).allocate_frame(layout)
+    fn allocate_frame(&self) -> Result<PhysPageNum, FrameAllocError> {
+        (**self).allocate_frame()
     }
     fn deallocate_frame(&self, ppn: PhysPageNum) {
         (**self).deallocate_frame(ppn)
@@ -321,6 +316,11 @@ pub struct FrameBox<A: FrameAllocator = DefaultFrameAllocator> {
 }
 
 impl<A: FrameAllocator> FrameBox<A> {
+    // 分配页帧并创建FrameBox
+    pub fn try_new_in(frame_alloc: A) -> Result<FrameBox<A>, FrameAllocError> {
+        let ppn = frame_alloc.allocate_frame()?;
+        Ok(FrameBox { ppn, frame_alloc })
+    }
     // unsafe说明。调用者必须保证以下约定：
     // 1. ppn只被一个FrameBox拥有，也就是不能破坏所有权约定
     // 2. 这个ppn是由frame_alloc分配的
@@ -335,7 +335,7 @@ impl<A: FrameAllocator> FrameBox<A> {
 
 impl<A: FrameAllocator> Drop for FrameBox<A> {
     fn drop(&mut self) {
-        // 释放的时候，不需要提供FrameLayout
+        // 释放所占有的页帧
         self.frame_alloc.deallocate_frame(self.ppn);
     }
 }
@@ -353,12 +353,10 @@ pub struct Sv39;
 //
 // 如果虚拟内存的模式是直接映射或者线性映射，这将不属于分页模式的范围。应当混合使用其它的地址空间，综合成为更大的地址空间。
 pub trait PageMode: Copy {
-    // 得到这一层页表（在物理内存上）最低的对齐要求
+    // 得到这一层大页物理地址最低的对齐要求
     fn get_layout_for_level(level: PageLevel) -> FrameLayout;
     // 得到根页表的等级。按如下方法计算：如果虚拟地址包含vpn[n]、vpn[n-1]...vpn[0]，那么根页表等级为n+1。
     fn root_level() -> PageLevel;
-    // 创建一个拥有所有权的页帧，需要注意的是，必须按照level的要求对齐。
-    fn create_frame_box<A: FrameAllocator>(level: PageLevel, frame_alloc: A) -> Result<FrameBox<A>, FrameAllocError>;
     // 得到从高到低的页表等级
     fn visit_levels() -> &'static [PageLevel];
     // 得到一个虚拟页号各个等级的索引，从高到低
@@ -386,17 +384,11 @@ impl PageMode for Sv39 {
             0 => FrameLayout::new_unchecked(1), // 4K页，最低层页
             1 => FrameLayout::new_unchecked(512), // 2M页
             2 => FrameLayout::new_unchecked(512 * 512), // 1G页，最高层大页
-            3 => FrameLayout::new_unchecked(1), // 根页表
             _ => unimplemented!("this level does not exist on Sv39")
         } }
     }
     fn root_level() -> PageLevel {
         PageLevel(3)
-    }
-    fn create_frame_box<A: FrameAllocator>(level: PageLevel, frame_alloc: A) -> Result<FrameBox<A>, FrameAllocError> {
-        let layout = Self::get_layout_for_level(level);
-        let ppn = frame_alloc.allocate_frame(layout)?;
-        Ok(unsafe { FrameBox::from_ppn(ppn, frame_alloc) })
     }
     fn visit_levels() -> &'static [PageLevel] {
         &[PageLevel(2), PageLevel(1), PageLevel(0)]
@@ -459,7 +451,7 @@ impl<M: PageMode, A: FrameAllocator + Clone> PagedAddrSpace<M, A> {
     // 创建一个空的分页地址空间
     pub fn try_new_in(page_mode: M, frame_alloc: A) -> Result<Self, FrameAllocError> {
         // 新建一个满足根页表对齐要求的帧；虽然代码没有体现，通常对齐要求是1
-        let mut root_frame = M::create_frame_box(M::root_level(), frame_alloc.clone())?;
+        let mut root_frame = FrameBox::try_new_in(frame_alloc.clone())?;
         // 向帧里填入一个空的根页表
         unsafe { fill_frame_with_all_invalid_page_table(&mut root_frame, page_mode) };
         Ok(Self { root_frame, frames: Vec::new(), frame_alloc, page_mode })
