@@ -31,7 +31,7 @@ pub(crate) fn heap_init() {
 }
 
 const PAGE_SIZE_BITS: usize = 12; // on RISC-V RV64, 4KB
-// const PAGE_SIZE: usize = 1 << PAGE_SIZE_BITS;
+const PAGE_SIZE: usize = 1 << PAGE_SIZE_BITS;
 const PADDR_SPACE_BITS: usize = 56;
 const PPN_VALID_MASK: usize = (1 << (PADDR_SPACE_BITS - PAGE_SIZE_BITS)) - 1;
 // const VADDR_SPACE_BITS: usize = 39;
@@ -77,6 +77,9 @@ impl PhysPageNum {
         } else {
             begin.0 <= self.0 || self.0 < end.0
         }
+    }
+    pub fn is_aligned_like(&self, layout: FrameLayout) -> bool {
+        self.0 % layout.frame_align() == 0
     }
 }
 
@@ -390,6 +393,7 @@ impl PageMode for Sv39 {
 pub struct PagedAddrSpace<M: PageMode, A: FrameAllocator = DefaultFrameAllocator> {
     root_frame: FrameBox<A>,
     frames: Vec<FrameBox<A>>,
+    frame_alloc: A,
     page_mode: M,
 }
 
@@ -398,7 +402,7 @@ impl<M: PageMode, A: FrameAllocator> PagedAddrSpace<M, A> {
     pub fn try_new_in(page_mode: M, frame_alloc: A) -> Result<Self, FrameAllocError> {
         // 这里直接新建了一个最低的layout，我们认为根页帧只需要对齐到帧就可以了
         let root_frame = M::create_frame_box(M::root_level(), frame_alloc)?;
-        Ok(Self { root_frame, frames: Vec::new(), page_mode })
+        Ok(Self { root_frame, frames: Vec::new(), frame_alloc, page_mode })
     }
 }
 
@@ -427,6 +431,21 @@ bitflags::bitflags! {
 //         todo!()
 //     }
 // }
+
+#[repr(C)]
+pub struct PageTable {
+    entries: [PageTableEntry; PAGE_SIZE / core::mem::size_of::<PageTableEntry>()],
+}
+
+#[repr(C)]
+pub union PageTableEntry {
+    value: usize,
+    unused: usize,
+}
+
+pub struct RiscvPageEntry {
+
+}
 
 // 切换地址空间，同时需要提供1.地址空间的详细设置 2.地址空间编号
 // 不一定最后的API就是这样的，留个坑
@@ -460,3 +479,16 @@ bitflags::bitflags! {
 //     panic!("Can't map v to p under this page mode")
 // }
 
+// for level in 0..M::root_level().rev() { // [2, 1, 0]
+//     let align = M::get_layout_for_level(level).frame_align();
+//     if (v - p) % align != 0 || n < align {
+//         continue;
+//     }
+//     let page_table_ppn = self.frame_alloc.allocate_frame(layout);
+//     if !page_table_ppn.is_aligned_like(layout) {
+//         continue;
+//     }
+//     self. // map(...)
+//     break;
+//     //
+// } 
