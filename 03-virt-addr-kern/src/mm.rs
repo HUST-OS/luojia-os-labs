@@ -353,6 +353,8 @@ pub trait PageMode: Copy {
     fn visit_levels_from(level: PageLevel) -> &'static [PageLevel];
     // 得到一个虚拟页号各个等级的索引，从高到低
     fn vpn_index(vpn: VirtPageNum, level: PageLevel) -> usize;
+    // 得到虚拟页号在当前等级下重新索引得到的页号
+    fn vpn_level_index(vpn: VirtPageNum, level: PageLevel, idx: usize) -> VirtPageNum;
     // 当前分页模式下，页表的类型
     type PageTable: core::ops::Index<usize, Output = Self::Slot> + core::ops::IndexMut<usize>;
     // 创建页表时，把它的所有条目设置为无效条目
@@ -428,6 +430,14 @@ impl PageMode for Sv39 {
     }
     fn vpn_index(vpn: VirtPageNum, level: PageLevel) -> usize {
         (vpn.0 >> (level.0 * 9)) & 511
+    }
+    fn vpn_level_index(vpn: VirtPageNum, level: PageLevel, idx: usize) -> VirtPageNum {
+        VirtPageNum(match level.0 {
+            0 => (vpn.0 / 512) * 512 + idx,
+            1 => (vpn.0 / (512 * 512)) * (512 * 512) + idx * 512,
+            2 => (vpn.0 / (512 * 512 * 512)) * (512 * 512 * 512) + idx * 512 * 512,
+            _ => unimplemented!("this level does not exist on Sv39"),
+        })
     }
     type Entry = Sv39PageEntry;
     type Slot = Sv39PageSlot;
@@ -585,7 +595,7 @@ impl<M: PageMode, A: FrameAllocator + Clone> PagedAddrSpace<M, A> {
             let table = unsafe { self.alloc_get_table(page_level, vpn_range.start) }?;
             println!("[kernel-alloc-map-test] IDX RANGE: {:?}", M::vpn_index(vpn_range.start, page_level)..M::vpn_index(vpn_range.end, page_level));
             for vidx in M::vpn_index(vpn_range.start, page_level)..M::vpn_index(vpn_range.end, page_level) {
-                let this_ppn = PhysPageNum(ppn.0 + vpn_range.start.0 - vpn.0 + M::get_layout_for_level(page_level).frame_align() * vidx);
+                let this_ppn = PhysPageNum(ppn.0 - vpn.0 + M::vpn_level_index(vpn_range.start, page_level, vidx).0);
                 println!("[kernel-alloc-map-test] Table: {:p} Vidx {} -> Ppn {:x?}", table, vidx, this_ppn);
                 match M::slot_try_get_entry(&mut table[vidx]) {
                     Ok(_entry) => panic!("already allocated"),
@@ -635,7 +645,7 @@ impl<M: PageMode> MapPairs<M> {
             }
             break;
         } 
-        // println!("[SOLVE] Ans = {:x?}", ans);
+        println!("[SOLVE] Ans = {:x?}", ans);
         Self { ans_iter: ans.into_iter(), mode }
     }
 }
