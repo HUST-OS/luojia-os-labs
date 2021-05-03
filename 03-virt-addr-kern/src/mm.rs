@@ -53,14 +53,14 @@ impl PhysAddr {
 #[derive(Copy, Clone, PartialEq, Eq, Debug)]
 pub struct VirtAddr(pub usize);
 
-// impl VirtAddr {
-//     pub fn page_number(&self) -> VirtPageNum { 
-//         VirtPageNum(self.0 >> PAGE_SIZE_BITS)
-//     }
+impl VirtAddr {
+    pub fn page_number(&self) -> VirtPageNum { 
+        VirtPageNum(self.0 >> PAGE_SIZE_BITS)
+    }
 //     pub fn page_offset(&self) -> usize { 
 //         self.0 & (PAGE_SIZE - 1)
-//     }
-// }
+    // }
+}
 
 #[derive(Copy, Clone, PartialEq, Eq, Debug)]
 pub struct PhysPageNum(usize);
@@ -78,9 +78,6 @@ impl PhysPageNum {
         } else {
             begin.0 <= self.0 || self.0 < end.0
         }
-    }
-    pub fn is_aligned_like(&self, layout: FrameLayout) -> bool {
-        self.0 % layout.frame_align() == 0
     }
 }
 
@@ -322,12 +319,12 @@ impl<A: FrameAllocator> FrameBox<A> {
         let ppn = frame_alloc.allocate_frame()?;
         Ok(FrameBox { ppn, frame_alloc })
     }
-    // unsafe说明。调用者必须保证以下约定：
-    // 1. ppn只被一个FrameBox拥有，也就是不能破坏所有权约定
-    // 2. 这个ppn是由frame_alloc分配的
-    unsafe fn from_ppn(ppn: PhysPageNum, frame_alloc: A) -> Self {
-        Self { ppn, frame_alloc }
-    }
+    // // unsafe说明。调用者必须保证以下约定：
+    // // 1. ppn只被一个FrameBox拥有，也就是不能破坏所有权约定
+    // // 2. 这个ppn是由frame_alloc分配的
+    // unsafe fn from_ppn(ppn: PhysPageNum, frame_alloc: A) -> Self {
+    //     Self { ppn, frame_alloc }
+    // }
 
     fn phys_page_num(&self) -> PhysPageNum {
         self.ppn
@@ -358,6 +355,8 @@ pub trait PageMode: Copy {
     fn get_layout_for_level(level: PageLevel) -> FrameLayout;
     // 得到从高到低的页表等级
     fn visit_levels_until(level: PageLevel) -> &'static [PageLevel];
+    // 得到从高到低的页表等级，不包括level
+    fn visit_levels_before(level: PageLevel) -> &'static [PageLevel];
     // 得到从高到低的页表等级
     fn visit_levels_from(level: PageLevel) -> &'static [PageLevel];
     // 得到一个虚拟页号各个等级的索引，从高到低
@@ -365,13 +364,19 @@ pub trait PageMode: Copy {
     // 页式管理模式的页表项类型
     type ModeEntry;
     // 解释页表项目；如果项目无效，返回None，可以直接操作pte写入其它数据
-    unsafe fn convert_entry_mut(pte: &mut PageTableEntry) -> Option<&mut Self::ModeEntry>;
+    unsafe fn convert_entry_mut(pte: &mut PageTableEntry) -> Result<&mut Self::ModeEntry, &mut PageTableEntry>;
     // 创建页表时，把它的所有条目设置为无效条目
     unsafe fn fill_page_table_invalid(table: &mut PageTable);
     // 页表项的设置
-    type Flags;
-    // 写数据到页表项目
+    type Flags : Clone;
+    // 写数据，建立一个到子页表的页表项
+    fn pte_set_child(pte: &mut PageTableEntry, ppn: PhysPageNum);
+    // 写数据，建立一个到内存地址的页表项
+    fn pte_set_mapping(pte: &mut PageTableEntry, ppn: PhysPageNum, flags: Self::Flags);
+    // 写数据到页表项目，说明这是一个叶子节点
     fn write_ppn_flags(entry: &mut Self::ModeEntry, ppn: PhysPageNum, flags: Self::Flags);
+    // 得到一个页表项目包含的物理页号
+    fn get_ppn_from_entry(entry: &mut Self::ModeEntry) -> PhysPageNum;
 }
 
 // 我们认为今天的分页系统都是分为不同的等级，就是多级页表，这里表示页表的等级是多少
@@ -402,6 +407,14 @@ impl PageMode for Sv39 {
             _ => unimplemented!("this level does not exist on Sv39"),
         }
     }
+    fn visit_levels_before(level: PageLevel) -> &'static [PageLevel] {
+        match level.0 {
+            0 => &[PageLevel(2), PageLevel(1)],
+            1 => &[PageLevel(2)],
+            2 => &[],
+            _ => unimplemented!("this level does not exist on Sv39"),
+        }
+    }
     fn visit_levels_from(level: PageLevel) -> &'static [PageLevel] {
         match level.0 {
             0 => &[PageLevel(0)],
@@ -414,20 +427,31 @@ impl PageMode for Sv39 {
         (vpn.0 >> (level.0 * 9)) & 511
     }
     type ModeEntry = Sv39PageEntry;
-    unsafe fn convert_entry_mut(pte: &mut PageTableEntry) -> Option<&mut Sv39PageEntry> {
-        let ans = unsafe { &mut *(&mut pte.child_page as *mut _ as *mut Sv39PageEntry) };
+    unsafe fn convert_entry_mut(pte: &mut PageTableEntry) -> Result<&mut Self::ModeEntry, &mut PageTableEntry> {
+        let ans = &mut *(&mut pte.child_page as *mut _ as *mut Sv39PageEntry);
         if ans.flags().contains(Sv39Flags::V) {
-            Some(ans)
+            Ok(ans)
         } else {
-            None
+            Err(pte)
         }
     }
     unsafe fn fill_page_table_invalid(table: &mut PageTable) {
-        table.entries = unsafe { core::mem::MaybeUninit::zeroed().assume_init() }; // 全零
+        table.entries = core::mem::MaybeUninit::zeroed().assume_init(); // 全零
     }
     type Flags = Sv39Flags;
-    fn write_ppn_flags(entry: &mut Sv39PageEntry, ppn: PhysPageNum, flags: Self::Flags) {
+    fn pte_set_child(pte: &mut PageTableEntry, ppn: PhysPageNum) {
+        let ans = unsafe { &mut *(&mut pte.child_page as *mut _ as *mut Sv39PageEntry) };
+        ans.write_ppn_flags(ppn, Sv39Flags::V); // V=1, R=W=X=0
+    }
+    fn pte_set_mapping(pte: &mut PageTableEntry, ppn: PhysPageNum, flags: Sv39Flags) {
+        let ans = unsafe { &mut *(&mut pte.child_page as *mut _ as *mut Sv39PageEntry) };
+        ans.write_ppn_flags(ppn, Sv39Flags::V | flags);
+    }
+    fn write_ppn_flags(entry: &mut Sv39PageEntry, ppn: PhysPageNum, flags: Sv39Flags) {
         entry.write_ppn_flags(ppn, flags);
+    }
+    fn get_ppn_from_entry(entry: &mut Sv39PageEntry) -> PhysPageNum {
+        entry.ppn()
     }
 }
 
@@ -465,12 +489,12 @@ pub struct PagedAddrSpace<M: PageMode, A: FrameAllocator = DefaultFrameAllocator
 }
 
 impl<M: PageMode, A: FrameAllocator + Clone> PagedAddrSpace<M, A> {
-    // 创建一个空的分页地址空间
+    // 创建一个空的分页地址空间。一定会产生内存的写操作
     pub fn try_new_in(page_mode: M, frame_alloc: A) -> Result<Self, FrameAllocError> {
         // 新建一个满足根页表对齐要求的帧；虽然代码没有体现，通常对齐要求是1
         let mut root_frame = FrameBox::try_new_in(frame_alloc.clone())?;
-        // todo: 不应该处理 向帧里填入一个空的根页表 
-        // unsafe { fill_frame_with_all_invalid_page_table(&mut root_frame, page_mode) };
+        // 向帧里填入一个空的根页表 
+        unsafe { fill_frame_with_all_invalid_page_table::<A, M>(&mut root_frame) };
         Ok(Self { root_frame, frames: Vec::new(), frame_alloc, page_mode })
     }
 }
@@ -493,35 +517,53 @@ bitflags::bitflags! {
     &mut *(pa.0 as *mut PageTable)
 }
 
-#[inline] unsafe fn fill_frame_with_all_invalid_page_table<A: FrameAllocator, M: PageMode>(b: &mut FrameBox<A>, mode: M) {
+#[inline] unsafe fn fill_frame_with_all_invalid_page_table<A: FrameAllocator, M: PageMode>(b: &mut FrameBox<A>) {
     let a = &mut *(b.ppn.addr_begin().0 as *mut PageTable);
     M::fill_page_table_invalid(a);
 }
 
-// pub enum AddrSpaceEntry<'a, M> {
-//     Vacant(&'a mut usize),
-//     Occupied(&'a mut M::ModeEntry),
-// }
+enum AddrSpaceEntry<'a, M: PageMode> {
+    Vacant(&'a mut PageTableEntry),
+    Occupied(&'a mut M::ModeEntry),
+}
 
-impl<M: PageMode, A: FrameAllocator> PagedAddrSpace<M, A> {
-    // 找到entry，如果寻找的过程中，中间的页表没创建，那么创建它们
-    // unsafe fn entry(&mut self, entry_level: PageLevel, vpn: VirtPageNum) -> AddrSpaceEntry<'a, M> {
-    //     let mut ppn = self.root_frame.phys_page_num();
-    //     for level in M::visit_levels_until(entry_level) {
-    //         let mut page_table = M::unref_ppn_mut(ppn);
-    //         let vidx = M::vpn_index(vpn, level);
-    //         if let Some(pte) = M::convert_entry_mut(&mut page_table.entries[vidx]) {
-    //             ppn = pte.ppn();
-    //         } else {
-    //             return VacantEntry;
-    //         }
-    //     }
-    //     return AddrSpaceEntry::Occupied(ppn)
-    // }
-    // pub fn get_map_pairs(&mut self, vpn: VirtPageNum, ppn: PhysPageNum, n: usize) -> MapPairs {
-    //     // 页分配算法，巨难写……留坑
-    //     Ok(())
-    // }
+impl<M: PageMode, A: FrameAllocator + Clone> PagedAddrSpace<M, A> {    
+    // 设置entry。如果寻找的过程中，中间的页表没创建，那么创建它们
+    unsafe fn alloc_set_entry(&mut self, entry_level: PageLevel, vpn: VirtPageNum) -> Result<AddrSpaceEntry<M>, FrameAllocError> {
+        let mut ppn = self.root_frame.phys_page_num();
+        for &level in M::visit_levels_before(entry_level) {
+            let page_table = unref_ppn_mut(ppn);
+            let vidx = M::vpn_index(vpn, level);
+            match M::convert_entry_mut(&mut page_table.entries[vidx]) {
+                Ok(pte) => ppn = M::get_ppn_from_entry(pte),
+                Err(mut entry) => {  // 需要一个内部页表，这里的页表项却没有数据，我们需要填写数据
+                    let frame_box = FrameBox::try_new_in(self.frame_alloc.clone())?;
+                    M::pte_set_child(&mut entry, frame_box.phys_page_num());
+                    self.frames.push(frame_box);
+                }
+            }
+        }
+        let page_table = unref_ppn_mut(ppn); // 此时ppn是当前所需要修改的页表
+        let vidx = M::vpn_index(vpn, entry_level);
+        Ok(match M::convert_entry_mut(&mut page_table.entries[vidx]) { 
+            Ok(pte) => AddrSpaceEntry::Occupied(pte),
+            // 创建了一个没有约束的生命周期。不过我们可以判断它是合法的，因为它的所有者是Self，在Self的周期内都合法
+            Err(entry) => AddrSpaceEntry::Vacant(&mut *(entry as *mut _))
+        })
+    }
+    pub fn allocate_map(&mut self, vpn: VirtPageNum, ppn: PhysPageNum, n: usize, flags: M::Flags) -> Result<(), FrameAllocError> {
+        for (page_level, vpn_range) in MapPairs::solve(vpn, ppn, n, self.page_mode) {
+            for vpn_cur in vpn_range.start.0..vpn_range.end.0 {
+                let vpn_cur = VirtPageNum(vpn_cur);
+                let entry = unsafe { self.alloc_set_entry(page_level, vpn_cur) }?;
+                match entry {
+                    AddrSpaceEntry::Occupied(_pte) => panic!("Already allocated!"),
+                    AddrSpaceEntry::Vacant(mut entry) => M::pte_set_mapping(&mut entry, ppn, flags.clone()),
+                }
+            } 
+        }
+        Ok(())
+    }
     // pub fn unmap(&mut self, vpn: VirtPageNum) {
     //     todo!()
     // }
