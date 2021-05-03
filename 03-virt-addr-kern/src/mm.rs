@@ -355,10 +355,10 @@ pub struct Sv39;
 pub trait PageMode: Copy {
     // 得到这一层大页物理地址最低的对齐要求
     fn get_layout_for_level(level: PageLevel) -> FrameLayout;
-    // 得到根页表的等级。按如下方法计算：如果虚拟地址包含vpn[n]、vpn[n-1]...vpn[0]，那么根页表等级为n+1。
-    fn root_level() -> PageLevel;
     // 得到从高到低的页表等级
-    fn visit_levels() -> &'static [PageLevel];
+    fn visit_levels_until(level: PageLevel) -> &'static [PageLevel];
+    // 得到从高到低的页表等级
+    fn visit_levels_from(level: PageLevel) -> &'static [PageLevel];
     // 得到一个虚拟页号各个等级的索引，从高到低
     fn vpn_index(vpn: VirtPageNum, level: PageLevel) -> usize;
     // 页式管理模式的页表项类型
@@ -378,6 +378,12 @@ pub trait PageMode: Copy {
 #[derive(Copy, Clone, PartialEq, Eq, Debug)]
 pub struct PageLevel(u8); 
 
+impl PageLevel {
+    pub const fn leaf_level() -> Self {
+        Self(0)
+    }
+}
+
 impl PageMode for Sv39 {
     fn get_layout_for_level(level: PageLevel) -> FrameLayout {
         unsafe { match level.0 {
@@ -387,11 +393,21 @@ impl PageMode for Sv39 {
             _ => unimplemented!("this level does not exist on Sv39")
         } }
     }
-    fn root_level() -> PageLevel {
-        PageLevel(3)
+    fn visit_levels_until(level: PageLevel) -> &'static [PageLevel] {
+        match level.0 {
+            0 => &[PageLevel(2), PageLevel(1), PageLevel(0)],
+            1 => &[PageLevel(2), PageLevel(1)],
+            2 => &[PageLevel(2)],
+            _ => unimplemented!("this level does not exist on Sv39"),
+        }
     }
-    fn visit_levels() -> &'static [PageLevel] {
-        &[PageLevel(2), PageLevel(1), PageLevel(0)]
+    fn visit_levels_from(level: PageLevel) -> &'static [PageLevel] {
+        match level.0 {
+            0 => &[PageLevel(0)],
+            1 => &[PageLevel(1), PageLevel(0)],
+            2 => &[PageLevel(2), PageLevel(1), PageLevel(0)],
+            _ => unimplemented!("this level does not exist on Sv39"),
+        }
     }
     fn vpn_index(vpn: VirtPageNum, level: PageLevel) -> usize {
         (vpn.0 >> (level.0 * 9)) & 511
@@ -452,8 +468,8 @@ impl<M: PageMode, A: FrameAllocator + Clone> PagedAddrSpace<M, A> {
     pub fn try_new_in(page_mode: M, frame_alloc: A) -> Result<Self, FrameAllocError> {
         // 新建一个满足根页表对齐要求的帧；虽然代码没有体现，通常对齐要求是1
         let mut root_frame = FrameBox::try_new_in(frame_alloc.clone())?;
-        // 向帧里填入一个空的根页表
-        unsafe { fill_frame_with_all_invalid_page_table(&mut root_frame, page_mode) };
+        // todo: 不应该处理 向帧里填入一个空的根页表 
+        // unsafe { fill_frame_with_all_invalid_page_table(&mut root_frame, page_mode) };
         Ok(Self { root_frame, frames: Vec::new(), frame_alloc, page_mode })
     }
 }
@@ -481,10 +497,16 @@ bitflags::bitflags! {
     M::fill_page_table_invalid(a);
 }
 
+// pub enum AddrSpaceEntry<'a, M> {
+//     Vacant(&'a mut usize),
+//     Occupied(&'a mut M::ModeEntry),
+// }
+
 impl<M: PageMode, A: FrameAllocator> PagedAddrSpace<M, A> {
-    // unsafe fn entry_mut(&mut self, vpn: VirtPageNum) -> &mut PageTableEntry {
+    // 找到entry，如果寻找的过程中，中间的页表没创建，那么创建它们
+    // unsafe fn entry(&mut self, entry_level: PageLevel, vpn: VirtPageNum) -> AddrSpaceEntry<'a, M> {
     //     let mut ppn = self.root_frame.phys_page_num();
-    //     for level in M::visit_levels() {
+    //     for level in M::visit_levels_until(entry_level) {
     //         let mut page_table = M::unref_ppn_mut(ppn);
     //         let vidx = M::vpn_index(vpn, level);
     //         if let Some(pte) = M::convert_entry_mut(&mut page_table.entries[vidx]) {
@@ -493,15 +515,49 @@ impl<M: PageMode, A: FrameAllocator> PagedAddrSpace<M, A> {
     //             return VacantEntry;
     //         }
     //     }
-    //     return Found(ppn)
+    //     return AddrSpaceEntry::Occupied(ppn)
     // }
-    // pub fn allocate_map(&mut self, vpn: VirtPageNum, flags: PageFlags) -> Result<(), FrameAllocError> {
-    //     // for level in M::levels().?? {
-
-    //     // }
-    //     // 页分配算法，巨难写……留坑
-    //     todo!()
-    // }
+    pub fn allocate_map(&mut self, vpn: VirtPageNum, ppn: PhysPageNum, n: usize)//, flags: M::Flags) 
+        -> Result<(), FrameAllocError> 
+    {
+        for &i in M::visit_levels_until(PageLevel::leaf_level()) {
+            let align = M::get_layout_for_level(i).frame_align();
+            println!("[kernel-space-test] i = {}, align = {}, vpn = {}, ppn = {}, n = {}", 
+                i.0, align, vpn.0, ppn.0, n);
+            if (vpn.0 - ppn.0) % align != 0 || n < align {
+                continue;
+            }
+            // map(2, ve2, vs2, ve2-v+p);
+            // map(1, ve1, ve2, ve1-v+p); map(1, vs2, vs1, vs2-v+p);
+            // map(0, v, ve1, p); map(0, vs1, v+n, vs1-v+p);
+            // map(1, ve1, vs1, ve1-v+p);
+            // map(0, v, ve1, p); map(0, vs1, v+n, vs1-v+p);
+            // map(0, v, v+n, p);
+            let (mut ve_prev, mut vs_prev) = (None, None);
+            for &j in M::visit_levels_from(i) {
+                let align_cur = M::get_layout_for_level(j).frame_align();
+                let ve_cur = align_cur * ((vpn.0 + align_cur - 1) / align_cur); // a * roundup(v / a)
+                let vs_cur = align_cur * ((vpn.0 + n) / align_cur); // a * rounddown((v+n) / a)
+                println!("[kernel-space-test] j = {}, align_cur = {}, ve_{} = {}, vs_{} = {}", j.0, align_cur, j.0, ve_cur, j.0, vs_cur);
+                if let (Some(ve_prev), Some(vs_prev)) = (ve_prev, vs_prev) {
+                    println!("[kernel-space-test] map({}, {}, {}, {})", j.0, ve_cur, ve_prev, ve_cur - vpn.0 + ppn.0);
+                    println!("[kernel-space-test] map({}, {}, {}, {})", j.0, vs_prev, vs_cur, vs_prev - vpn.0 + ppn.0);
+                    // self.map(j, ve_cur, ve_prev, ve_cur-v+p);
+                    // self.map(j, vs_prev, vs_cur, vs_prev-v+p);
+                } else {
+                    println!("[kernel-space-test] map({}, {}, {}, {})", j.0, ve_cur, vs_cur, ve_cur - vpn.0 + ppn.0);
+                    // self.map(j, ve_cur, vs_cur, ve_cur-v+p);
+                }
+                (ve_prev, vs_prev) = (Some(ve_cur), Some(vs_cur));
+            }
+            // let frame_box = FrameBox::try_new_in(self.frame_alloc)?;
+            
+            break;
+            //
+        } 
+        // 页分配算法，巨难写……留坑
+        Ok(())
+    }
     // pub fn unmap(&mut self, vpn: VirtPageNum) {
     //     todo!()
     // }
@@ -516,6 +572,15 @@ pub struct PageTable {
 pub union PageTableEntry {
     child_page: usize,
     unused_data: usize,
+}
+
+pub(crate) fn test_page_alloc() {
+    let from = PhysAddr(0x80_000_000).page_number();
+    let to = PhysAddr(0x100_000_000).page_number();
+    let frame_alloc = spin::Mutex::new(StackFrameAllocator::new(from, to));
+    let mut space = PagedAddrSpace::try_new_in(Sv39, &frame_alloc).unwrap();
+    println!("[kernel-space-test] Space: {:x?}", space);
+    space.allocate_map(VirtPageNum(0x90_000), PhysPageNum(0x50_000), 666666).unwrap();
 }
 
 // 切换地址空间，同时需要提供1.地址空间的详细设置 2.地址空间编号
@@ -556,9 +621,6 @@ pub union PageTableEntry {
 //         continue;
 //     }
 //     let page_table_ppn = self.frame_alloc.allocate_frame(layout);
-//     if !page_table_ppn.is_aligned_like(layout) {
-//         continue;
-//     }
 //     self. // map(...)
 //     break;
 //     //

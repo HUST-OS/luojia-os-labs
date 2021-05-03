@@ -2,6 +2,7 @@
 #![feature(alloc_error_handler)]
 #![feature(panic_info_message)]
 #![feature(generator_trait)]
+#![feature(destructuring_assignment)]
 #![no_std]
 #![no_main]
 
@@ -35,6 +36,7 @@ pub extern "C" fn rust_main(hartid: usize, dtb_pa: usize) -> ! {
     let kernel_addr_space = mm::PagedAddrSpace::try_new_in(mm::Sv39, &frame_alloc)
         .expect("allocate page to create kernel paged address space");
     println!("[kernel] Kernel address space: {:x?}", kernel_addr_space);
+    mm::test_page_alloc();
     mm::test_asid_alloc();
     let max_asid = mm::max_asid();
     let mut asid_alloc = mm::StackAsidAllocator::new(max_asid);
