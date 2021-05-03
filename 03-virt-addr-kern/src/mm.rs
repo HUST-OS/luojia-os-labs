@@ -493,7 +493,7 @@ use bit_field::BitField;
 impl Sv39PageEntry {
     #[inline]
     pub fn ppn(&self) -> PhysPageNum {
-        PhysPageNum(self.bits.get_bits(8..54))
+        PhysPageNum(self.bits.get_bits(10..54))
     }
     #[inline]
     pub fn flags(&self) -> Sv39Flags {
@@ -568,6 +568,7 @@ impl<M: PageMode, A: FrameAllocator + Clone> PagedAddrSpace<M, A> {
                 Err(mut slot) => {  // 需要一个内部页表，这里的页表项却没有数据，我们需要填写数据
                     let frame_box = FrameBox::try_new_in(self.frame_alloc.clone())?;
                     M::slot_set_child(&mut slot, frame_box.phys_page_num());
+                    println!("[] Created a new frame box");
                     ppn = frame_box.phys_page_num();
                     self.frames.push(frame_box);
                 }
@@ -585,7 +586,6 @@ impl<M: PageMode, A: FrameAllocator + Clone> PagedAddrSpace<M, A> {
             println!("[kernel-alloc-map-test] IDX RANGE: {:?}", M::vpn_index(vpn_range.start, page_level)..M::vpn_index(vpn_range.end, page_level));
             for vidx in M::vpn_index(vpn_range.start, page_level)..M::vpn_index(vpn_range.end, page_level) {
                 let this_ppn = PhysPageNum(ppn.0 + vpn_range.start.0 - vpn.0 + M::get_layout_for_level(page_level).frame_align() * vidx);
-                // println!("", vidx, this_ppn);
                 println!("[kernel-alloc-map-test] Table: {:p} Vidx {} -> Ppn {:x?}", table, vidx, this_ppn);
                 match M::slot_try_get_entry(&mut table[vidx]) {
                     Ok(_entry) => panic!("already allocated"),
