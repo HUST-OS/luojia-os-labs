@@ -65,7 +65,7 @@ impl Generator for Runtime {
             Trap::Exception(Exception::LoadFault) => KernelTrap::LoadAccessFault(stval),
             Trap::Exception(Exception::StoreFault) => KernelTrap::StoreAccessFault(stval),
             Trap::Exception(Exception::IllegalInstruction) => KernelTrap::IllegalInstruction(stval),
-            _ => panic!("todo: handle more exceptions!")
+            e => panic!("unhandled exception: {:?}! stval: {:#x?}", e, stval)
         };
         GeneratorState::Yielded(trap)
     }

@@ -23,13 +23,13 @@ use core::pin::Pin;
 use core::ops::{Generator, GeneratorState};
 
 pub extern "C" fn rust_main(hartid: usize, dtb_pa: usize) -> ! {
-    extern "C" { fn sbss(); fn ebss(); fn ekernel(); }
+    extern "C" { fn sbss(); fn ebss();/* fn ekernel(); */}
     unsafe { r0::zero_bss(&mut sbss as *mut _ as *mut u64, &mut ebss as *mut _ as *mut u64) };
     println!("[kernel] Hart id = {}, DTB physical address = {:#x}", hartid, dtb_pa);
     mm::heap_init();
     mm::test_frame_alloc();
     // 页帧分配器。对整个物理的地址空间来说，无论有多少个核，页帧分配器只有一个。
-    let from = mm::PhysAddr(ekernel as usize).page_number::<mm::Sv39>();
+    let from = mm::PhysAddr(0x80420000).page_number::<mm::Sv39>();
     let to = mm::PhysAddr(0x80800000).page_number::<mm::Sv39>(); // 暂时对qemu写死
     let frame_alloc = spin::Mutex::new(mm::StackFrameAllocator::new(from, to));
     println!("[kernel-frame] Frame allocator: {:x?}", frame_alloc);
@@ -40,7 +40,7 @@ pub extern "C" fn rust_main(hartid: usize, dtb_pa: usize) -> ! {
     kernel_addr_space.allocate_map(
         mm::VirtAddr(0x80000000).page_number::<mm::Sv39>(), 
         mm::PhysAddr(0x80000000).page_number::<mm::Sv39>(), 
-        2049,
+        2048,
         mm::Sv39Flags::R | mm::Sv39Flags::W | mm::Sv39Flags::X
     ).expect("allocate one mapped space");
     println!("[kernel] Kernel address space: {:x?}", kernel_addr_space);
