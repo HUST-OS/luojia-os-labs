@@ -522,45 +522,38 @@ bitflags::bitflags! {
     M::fill_page_table_invalid(a);
 }
 
-enum AddrSpaceEntry<'a, M: PageMode> {
-    Vacant(&'a mut PageTableEntry),
-    Occupied(&'a mut M::ModeEntry),
-}
-
 impl<M: PageMode, A: FrameAllocator + Clone> PagedAddrSpace<M, A> {    
     // 设置entry。如果寻找的过程中，中间的页表没创建，那么创建它们
-    unsafe fn alloc_set_entry(&mut self, entry_level: PageLevel, vpn: VirtPageNum) -> Result<AddrSpaceEntry<M>, FrameAllocError> {
+    unsafe fn alloc_get_table(&mut self, entry_level: PageLevel, vpn_start: VirtPageNum) -> Result<&mut PageTable, FrameAllocError> {
         let mut ppn = self.root_frame.phys_page_num();
         for &level in M::visit_levels_before(entry_level) {
             let page_table = unref_ppn_mut(ppn);
-            let vidx = M::vpn_index(vpn, level);
+            let vidx = M::vpn_index(vpn_start, level);
             match M::convert_entry_mut(&mut page_table.entries[vidx]) {
-                Ok(pte) => ppn = M::get_ppn_from_entry(pte),
-                Err(mut entry) => {  // 需要一个内部页表，这里的页表项却没有数据，我们需要填写数据
+                Ok(entry) => ppn = M::get_ppn_from_entry(entry),
+                Err(mut pte) => {  // 需要一个内部页表，这里的页表项却没有数据，我们需要填写数据
                     let frame_box = FrameBox::try_new_in(self.frame_alloc.clone())?;
-                    M::pte_set_child(&mut entry, frame_box.phys_page_num());
+                    M::pte_set_child(&mut pte, frame_box.phys_page_num());
                     self.frames.push(frame_box);
                 }
             }
         }
         let page_table = unref_ppn_mut(ppn); // 此时ppn是当前所需要修改的页表
-        let vidx = M::vpn_index(vpn, entry_level);
-        Ok(match M::convert_entry_mut(&mut page_table.entries[vidx]) { 
-            Ok(pte) => AddrSpaceEntry::Occupied(pte),
-            // 创建了一个没有约束的生命周期。不过我们可以判断它是合法的，因为它的所有者是Self，在Self的周期内都合法
-            Err(entry) => AddrSpaceEntry::Vacant(&mut *(entry as *mut _))
-        })
+        // 创建了一个没有约束的生命周期。不过我们可以判断它是合法的，因为它的所有者是Self，在Self的周期内都合法
+        Ok(&mut *(page_table as *mut _))
     }
     pub fn allocate_map(&mut self, vpn: VirtPageNum, ppn: PhysPageNum, n: usize, flags: M::Flags) -> Result<(), FrameAllocError> {
         for (page_level, vpn_range) in MapPairs::solve(vpn, ppn, n, self.page_mode) {
-            for vpn_cur in vpn_range.start.0..vpn_range.end.0 {
-                let vpn_cur = VirtPageNum(vpn_cur);
-                let entry = unsafe { self.alloc_set_entry(page_level, vpn_cur) }?;
-                match entry {
-                    AddrSpaceEntry::Occupied(_pte) => panic!("Already allocated!"),
-                    AddrSpaceEntry::Vacant(mut entry) => M::pte_set_mapping(&mut entry, ppn, flags.clone()),
+            assert!(M::vpn_index(vpn_range.end, page_level) - M::vpn_index(vpn_range.start, page_level) <= 512); // todo: other modes
+            let table = unsafe { self.alloc_get_table(page_level, vpn_range.start) }?;
+            for vidx in M::vpn_index(vpn_range.start, page_level)..M::vpn_index(vpn_range.end, page_level) {
+                let this_ppn = PhysPageNum(ppn.0 + vpn_range.start.0 - vpn.0 + M::get_layout_for_level(page_level).frame_align() * vidx);
+                // println!("Vidx {} -> Ppn {:x?}", vidx, this_ppn);
+                match unsafe { M::convert_entry_mut(&mut table.entries[vidx]) } {
+                    Ok(_entry) => panic!("Already allocated"),
+                    Err(pte) => M::pte_set_mapping(pte, this_ppn, flags.clone())
                 }
-            } 
+            }
         }
         Ok(())
     }
@@ -604,6 +597,7 @@ impl<M: PageMode> MapPairs<M> {
             }
             break;
         } 
+        // println!("[SOLVE] Ans = {:x?}", ans);
         Self { ans_iter: ans.into_iter(), mode }
     }
 }
