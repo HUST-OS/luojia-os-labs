@@ -367,6 +367,8 @@ pub trait PageMode: Copy {
     type ModeEntry;
     // 解释页表项目；如果项目无效，返回None，可以直接操作pte写入其它数据
     unsafe fn convert_entry_mut(pte: &mut PageTableEntry) -> Option<&mut Self::ModeEntry>;
+    // 创建页表时，把它的所有条目设置为无效条目
+    unsafe fn fill_page_table_invalid(table: &mut PageTable);
     // 页表项的设置
     type Flags;
     // 写数据到页表项目
@@ -411,6 +413,9 @@ impl PageMode for Sv39 {
             None
         }
     }
+    unsafe fn fill_page_table_invalid(table: &mut PageTable) {
+        table.entries = unsafe { core::mem::MaybeUninit::zeroed().assume_init() }; // 全零
+    }
     type Flags = Sv39Flags;
     fn write_ppn_flags(entry: &mut Sv39PageEntry, ppn: PhysPageNum, flags: Self::Flags) {
         entry.write_ppn_flags(ppn, flags);
@@ -453,8 +458,10 @@ pub struct PagedAddrSpace<M: PageMode, A: FrameAllocator = DefaultFrameAllocator
 impl<M: PageMode, A: FrameAllocator + Clone> PagedAddrSpace<M, A> {
     // 创建一个空的分页地址空间
     pub fn try_new_in(page_mode: M, frame_alloc: A) -> Result<Self, FrameAllocError> {
-        // 这里直接新建了一个最低的layout，我们认为根页帧只需要对齐到帧就可以了
-        let root_frame = M::create_frame_box(M::root_level(), frame_alloc.clone())?;
+        // 新建一个满足根页表对齐要求的帧；虽然代码没有体现，通常对齐要求是1
+        let mut root_frame = M::create_frame_box(M::root_level(), frame_alloc.clone())?;
+        // 向帧里填入一个空的根页表
+        unsafe { fill_frame_with_all_invalid_page_table(&mut root_frame, page_mode) };
         Ok(Self { root_frame, frames: Vec::new(), frame_alloc, page_mode })
     }
 }
@@ -472,9 +479,14 @@ bitflags::bitflags! {
     }
 }
 
-unsafe fn unref_ppn_mut<'a>(ppn: PhysPageNum) -> &'a mut PageTable {
+#[inline] unsafe fn unref_ppn_mut<'a>(ppn: PhysPageNum) -> &'a mut PageTable {
     let pa = ppn.addr_begin();
     &mut *(pa.0 as *mut PageTable)
+}
+
+#[inline] unsafe fn fill_frame_with_all_invalid_page_table<A: FrameAllocator, M: PageMode>(b: &mut FrameBox<A>, mode: M) {
+    let a = &mut *(b.ppn.addr_begin().0 as *mut PageTable);
+    M::fill_page_table_invalid(a);
 }
 
 impl<M: PageMode, A: FrameAllocator> PagedAddrSpace<M, A> {
