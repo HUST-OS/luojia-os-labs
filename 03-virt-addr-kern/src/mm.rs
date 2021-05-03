@@ -573,7 +573,6 @@ impl<M: PageMode, A: FrameAllocator + Clone> PagedAddrSpace<M, A> {
     }
     pub fn allocate_map(&mut self, vpn: VirtPageNum, ppn: PhysPageNum, n: usize, flags: M::Flags) -> Result<(), FrameAllocError> {
         for (page_level, vpn_range) in MapPairs::solve(vpn, ppn, n, self.page_mode) {
-            assert!(M::vpn_index(vpn_range.end, page_level) - M::vpn_index(vpn_range.start, page_level) <= 512); // todo: other modes
             let table = unsafe { self.alloc_get_table(page_level, vpn_range.start) }?;
             for vidx in M::vpn_index(vpn_range.start, page_level)..M::vpn_index(vpn_range.end, page_level) {
                 let this_ppn = PhysPageNum(ppn.0 + vpn_range.start.0 - vpn.0 + M::get_layout_for_level(page_level).frame_align() * vidx);
