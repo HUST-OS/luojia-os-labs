@@ -332,12 +332,6 @@ impl<A: FrameAllocator> Drop for FrameBox<A> {
     }
 }
 
-// 没有实现drop函数
-
-// Sv39分页系统模式；RISC-V RV64下有效
-#[derive(Copy, Clone, PartialEq, Eq, Debug)]
-pub struct Sv39;
-
 // 分页模式
 //
 // 在每个页式管理模式下，我们认为分页系统分为不同的等级，每一级如果存在大页页表，都应当有相应的对齐要求。
@@ -349,8 +343,6 @@ pub trait PageMode: Copy {
     const FRAME_SIZE_BITS: usize;
     // 当前分页模式下，物理页号的位数
     const PPN_BITS: usize;
-    // 当前分页模式下，页表的类型
-    type PageTable: core::ops::Index<usize, Output = Self::Slot> + core::ops::IndexMut<usize>;
     // 得到这一层大页物理地址最低的对齐要求
     fn get_layout_for_level(level: PageLevel) -> FrameLayout;
     // 得到从高到低的页表等级
@@ -361,14 +353,16 @@ pub trait PageMode: Copy {
     fn visit_levels_from(level: PageLevel) -> &'static [PageLevel];
     // 得到一个虚拟页号各个等级的索引，从高到低
     fn vpn_index(vpn: VirtPageNum, level: PageLevel) -> usize;
-    // 页式管理模式，有效的页表项类型
-    type Entry;
-    // 页式管理模式，可能有效也可能无效的页表项类型
-    type Slot;
-    // 解释页表项目；如果项目无效，返回None，可以直接操作slot写入其它数据
-    fn slot_try_get_entry(slot: &mut Self::Slot) -> Result<&mut Self::Entry, &mut Self::Slot>;
+    // 当前分页模式下，页表的类型
+    type PageTable: core::ops::Index<usize, Output = Self::Slot> + core::ops::IndexMut<usize>;
     // 创建页表时，把它的所有条目设置为无效条目
     unsafe fn init_page_table(table: &mut Self::PageTable);
+    // 页式管理模式，可能有效也可能无效的页表项类型
+    type Slot;
+    // 页式管理模式，有效的页表项类型
+    type Entry;
+    // 解释页表项目；如果项目无效，返回None，可以直接操作slot写入其它数据
+    fn slot_try_get_entry(slot: &mut Self::Slot) -> Result<&mut Self::Entry, &mut Self::Slot>;
     // 页表项的设置
     type Flags : Clone;
     // 写数据，建立一个到子页表的页表项
@@ -391,6 +385,10 @@ impl PageLevel {
         Self(0)
     }
 }
+
+// Sv39分页系统模式；RISC-V RV64下有效
+#[derive(Copy, Clone, PartialEq, Eq, Debug)]
+pub struct Sv39;
 
 impl PageMode for Sv39 {
     const FRAME_SIZE_BITS: usize = 12;
