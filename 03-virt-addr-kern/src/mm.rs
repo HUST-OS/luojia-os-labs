@@ -36,7 +36,7 @@ pub struct PhysAddr(pub usize);
 
 impl PhysAddr {
     pub fn page_number<M: PageMode>(&self) -> PhysPageNum { 
-        PhysPageNum(self.0 >> M::PAGE_SIZE_BITS)
+        PhysPageNum(self.0 >> M::FRAME_SIZE_BITS)
     }
     // pub fn page_offset(&self) -> usize { 
     //     self.0 & (PAGE_SIZE - 1)
@@ -48,7 +48,7 @@ pub struct VirtAddr(pub usize);
 
 impl VirtAddr {
     pub fn page_number<M: PageMode>(&self) -> VirtPageNum { 
-        VirtPageNum(self.0 >> M::PAGE_SIZE_BITS)
+        VirtPageNum(self.0 >> M::FRAME_SIZE_BITS)
     }
 //     pub fn page_offset(&self) -> usize { 
 //         self.0 & (PAGE_SIZE - 1)
@@ -60,7 +60,7 @@ pub struct PhysPageNum(usize);
 
 impl PhysPageNum {
     pub fn addr_begin<M: PageMode>(&self) -> PhysAddr {
-        PhysAddr(self.0 << M::PAGE_SIZE_BITS)
+        PhysAddr(self.0 << M::FRAME_SIZE_BITS)
     }
     pub fn next_page(&self) -> PhysPageNum {
         // PhysPageNum(self.0.wrapping_add(1) & ((1 << M::PPN_BITS) - 1))
@@ -80,7 +80,7 @@ pub struct VirtPageNum(usize);
 
 // impl VirtPageNum {
 //     pub fn addr_begin(&self) -> VirtAddr {
-//         VirtAddr(self.0 << PAGE_SIZE_BITS)
+//         VirtAddr(self.0 << FRAME_SIZE_BITS)
 //     }
 // }
 
@@ -345,8 +345,12 @@ pub struct Sv39;
 //
 // 如果虚拟内存的模式是直接映射或者线性映射，这将不属于分页模式的范围。应当混合使用其它的地址空间，综合成为更大的地址空间。
 pub trait PageMode: Copy {
-    const PAGE_SIZE_BITS: usize;
+    // 当前分页模式下，页帧大小的二进制位数。例如，4K页为12位。
+    const FRAME_SIZE_BITS: usize;
+    // 当前分页模式下，物理页号的位数
     const PPN_BITS: usize;
+    // 当前分页模式下，页表的类型
+    type PageTable: core::ops::Index<usize, Output = PageTableEntry> + core::ops::IndexMut<usize>;
     // 得到这一层大页物理地址最低的对齐要求
     fn get_layout_for_level(level: PageLevel) -> FrameLayout;
     // 得到从高到低的页表等级
@@ -362,7 +366,7 @@ pub trait PageMode: Copy {
     // 解释页表项目；如果项目无效，返回None，可以直接操作pte写入其它数据
     unsafe fn convert_entry_mut(pte: &mut PageTableEntry) -> Result<&mut Self::ModeEntry, &mut PageTableEntry>;
     // 创建页表时，把它的所有条目设置为无效条目
-    unsafe fn fill_page_table_invalid(table: &mut PageTable);
+    unsafe fn fill_page_table_invalid(table: &mut Self::PageTable);
     // 页表项的设置
     type Flags : Clone;
     // 写数据，建立一个到子页表的页表项
@@ -387,8 +391,9 @@ impl PageLevel {
 }
 
 impl PageMode for Sv39 {
-    const PAGE_SIZE_BITS: usize = 12;
+    const FRAME_SIZE_BITS: usize = 12;
     const PPN_BITS: usize = 44;
+    type PageTable = Sv39PageTable;
     fn get_layout_for_level(level: PageLevel) -> FrameLayout {
         unsafe { match level.0 {
             0 => FrameLayout::new_unchecked(1), // 4K页，最低层页
@@ -433,7 +438,7 @@ impl PageMode for Sv39 {
             Err(pte)
         }
     }
-    unsafe fn fill_page_table_invalid(table: &mut PageTable) {
+    unsafe fn fill_page_table_invalid(table: &mut Self::PageTable) {
         table.entries = core::mem::MaybeUninit::zeroed().assume_init(); // 全零
     }
     type Flags = Sv39Flags;
@@ -450,6 +455,24 @@ impl PageMode for Sv39 {
     }
     fn get_ppn_from_entry(entry: &mut Sv39PageEntry) -> PhysPageNum {
         entry.ppn()
+    }
+}
+
+#[repr(C)]
+pub struct Sv39PageTable {
+    entries: [PageTableEntry; 512], // todo: other modes
+}
+
+impl core::ops::Index<usize> for Sv39PageTable {
+    type Output = PageTableEntry;
+    fn index(&self, idx: usize) -> &PageTableEntry {
+        &self.entries[idx]
+    }
+}
+
+impl core::ops::IndexMut<usize> for Sv39PageTable {
+    fn index_mut(&mut self, idx: usize) -> &mut PageTableEntry {
+        &mut self.entries[idx]
     }
 }
 
@@ -510,24 +533,24 @@ bitflags::bitflags! {
     }
 }
 
-#[inline] unsafe fn unref_ppn_mut<'a, M: PageMode>(ppn: PhysPageNum) -> &'a mut PageTable {
+#[inline] unsafe fn unref_ppn_mut<'a, M: PageMode>(ppn: PhysPageNum) -> &'a mut M::PageTable {
     let pa = ppn.addr_begin::<M>();
-    &mut *(pa.0 as *mut PageTable)
+    &mut *(pa.0 as *mut M::PageTable)
 }
 
 #[inline] unsafe fn fill_frame_with_all_invalid_page_table<A: FrameAllocator, M: PageMode>(b: &mut FrameBox<A>) {
-    let a = &mut *(b.ppn.addr_begin::<M>().0 as *mut PageTable);
+    let a = &mut *(b.ppn.addr_begin::<M>().0 as *mut M::PageTable);
     M::fill_page_table_invalid(a);
 }
 
 impl<M: PageMode, A: FrameAllocator + Clone> PagedAddrSpace<M, A> {    
     // 设置entry。如果寻找的过程中，中间的页表没创建，那么创建它们
-    unsafe fn alloc_get_table(&mut self, entry_level: PageLevel, vpn_start: VirtPageNum) -> Result<&mut PageTable, FrameAllocError> {
+    unsafe fn alloc_get_table(&mut self, entry_level: PageLevel, vpn_start: VirtPageNum) -> Result<&mut M::PageTable, FrameAllocError> {
         let mut ppn = self.root_frame.phys_page_num();
         for &level in M::visit_levels_before(entry_level) {
             let page_table = unref_ppn_mut::<M>(ppn);
             let vidx = M::vpn_index(vpn_start, level);
-            match M::convert_entry_mut(&mut page_table.entries[vidx]) {
+            match M::convert_entry_mut(&mut page_table[vidx]) {
                 Ok(entry) => ppn = M::get_ppn_from_entry(entry),
                 Err(mut pte) => {  // 需要一个内部页表，这里的页表项却没有数据，我们需要填写数据
                     let frame_box = FrameBox::try_new_in(self.frame_alloc.clone())?;
@@ -547,7 +570,7 @@ impl<M: PageMode, A: FrameAllocator + Clone> PagedAddrSpace<M, A> {
             for vidx in M::vpn_index(vpn_range.start, page_level)..M::vpn_index(vpn_range.end, page_level) {
                 let this_ppn = PhysPageNum(ppn.0 + vpn_range.start.0 - vpn.0 + M::get_layout_for_level(page_level).frame_align() * vidx);
                 // println!("Vidx {} -> Ppn {:x?}", vidx, this_ppn);
-                match unsafe { M::convert_entry_mut(&mut table.entries[vidx]) } {
+                match unsafe { M::convert_entry_mut(&mut table[vidx]) } {
                     Ok(_entry) => panic!("Already allocated"),
                     Err(pte) => M::pte_set_mapping(pte, this_ppn, flags.clone())
                 }
@@ -605,11 +628,6 @@ impl<M> Iterator for MapPairs<M> {
     fn next(&mut self) -> Option<Self::Item> {
         self.ans_iter.next()
     }
-}
-
-#[repr(C)]
-pub struct PageTable {
-    entries: [PageTableEntry; 512], // todo: other modes
 }
 
 #[repr(C)]
