@@ -40,7 +40,7 @@ pub extern "C" fn rust_main(hartid: usize, dtb_pa: usize) -> ! {
     kernel_addr_space.allocate_map(
         mm::VirtAddr(0x80000000).page_number::<mm::Sv39>(), 
         mm::PhysAddr(0x80000000).page_number::<mm::Sv39>(), 
-        1024,
+        2048,
         mm::Sv39Flags::R | mm::Sv39Flags::W | mm::Sv39Flags::X
     ).expect("allocate one mapped space");
     println!("[kernel] Kernel address space: {:x?}", kernel_addr_space);
@@ -48,6 +48,10 @@ pub extern "C" fn rust_main(hartid: usize, dtb_pa: usize) -> ! {
     let max_asid = mm::max_asid();
     let mut asid_alloc = mm::StackAsidAllocator::new(max_asid);
     println!("[kernel-asid] Asid allocator: {:x?}", asid_alloc);
+    let kernel_asid = asid_alloc.allocate_asid().expect("alloc kernel asid");
+    unsafe {
+        mm::activate_paged_riscv_sv39(kernel_addr_space.root_page_number(), kernel_asid);
+    }
     executor::init();
     execute();
 }

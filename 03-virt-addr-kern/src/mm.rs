@@ -356,7 +356,7 @@ pub trait PageMode: Copy {
     // 当前分页模式下，页表的类型
     type PageTable: core::ops::Index<usize, Output = Self::Slot> + core::ops::IndexMut<usize>;
     // 创建页表时，把它的所有条目设置为无效条目
-    unsafe fn init_page_table(table: &mut Self::PageTable);
+    fn init_page_table(table: &mut Self::PageTable);
     // 页式管理模式，可能有效也可能无效的页表项类型
     type Slot;
     // 页式管理模式，有效的页表项类型
@@ -440,8 +440,8 @@ impl PageMode for Sv39 {
             Err(slot)
         }
     }
-    unsafe fn init_page_table(table: &mut Self::PageTable) {
-        table.entries = core::mem::MaybeUninit::zeroed().assume_init(); // 全零
+    fn init_page_table(table: &mut Self::PageTable) {
+        table.entries = unsafe { core::mem::MaybeUninit::zeroed().assume_init() }; // 全零
     }
     type Flags = Sv39Flags;
     fn slot_set_child(slot: &mut Sv39PageSlot, ppn: PhysPageNum) {
@@ -501,7 +501,20 @@ impl Sv39PageEntry {
     }
     #[inline]
     pub fn write_ppn_flags(&mut self, ppn: PhysPageNum, flags: Sv39Flags) {
-        self.bits = (ppn.0 << 8) | flags.bits() as usize
+        self.bits = (ppn.0 << 10) | flags.bits() as usize
+    }
+}
+
+bitflags::bitflags! {
+    pub struct Sv39Flags: u8 {
+        const V = 1 << 0;
+        const R = 1 << 1;
+        const W = 1 << 2;
+        const X = 1 << 3;
+        const U = 1 << 4;
+        const G = 1 << 5;
+        const A = 1 << 6;
+        const D = 1 << 7;
     }
 }
 
@@ -521,22 +534,14 @@ impl<M: PageMode, A: FrameAllocator + Clone> PagedAddrSpace<M, A> {
     pub fn try_new_in(page_mode: M, frame_alloc: A) -> Result<Self, FrameAllocError> {
         // 新建一个满足根页表对齐要求的帧；虽然代码没有体现，通常对齐要求是1
         let mut root_frame = FrameBox::try_new_in(frame_alloc.clone())?;
+        println!("[kernel-alloc-map-test] Root frame: {:x?}", root_frame.phys_page_num());
         // 向帧里填入一个空的根页表 
-        unsafe { fill_frame_with_all_invalid_page_table::<A, M>(&mut root_frame) };
+        unsafe { fill_frame_with_initialized_page_table::<A, M>(&mut root_frame) };
         Ok(Self { root_frame, frames: Vec::new(), frame_alloc, page_mode })
     }
-}
-
-bitflags::bitflags! {
-    pub struct Sv39Flags: u8 {
-        const V = 1 << 0;
-        const R = 1 << 1;
-        const W = 1 << 2;
-        const X = 1 << 3;
-        const U = 1 << 4;
-        const G = 1 << 5;
-        const A = 1 << 6;
-        const D = 1 << 7;
+    // 得到根页表的地址
+    pub fn root_page_number(&self) -> PhysPageNum {
+        self.root_frame.phys_page_num()
     }
 }
 
@@ -545,7 +550,7 @@ bitflags::bitflags! {
     &mut *(pa.0 as *mut M::PageTable)
 }
 
-#[inline] unsafe fn fill_frame_with_all_invalid_page_table<A: FrameAllocator, M: PageMode>(b: &mut FrameBox<A>) {
+#[inline] unsafe fn fill_frame_with_initialized_page_table<A: FrameAllocator, M: PageMode>(b: &mut FrameBox<A>) {
     let a = &mut *(b.ppn.addr_begin::<M>().0 as *mut M::PageTable);
     M::init_page_table(a);
 }
@@ -555,6 +560,7 @@ impl<M: PageMode, A: FrameAllocator + Clone> PagedAddrSpace<M, A> {
     unsafe fn alloc_get_table(&mut self, entry_level: PageLevel, vpn_start: VirtPageNum) -> Result<&mut M::PageTable, FrameAllocError> {
         let mut ppn = self.root_frame.phys_page_num();
         for &level in M::visit_levels_before(entry_level) {
+            println!("[] BEFORE PPN = {:x?}", ppn);
             let page_table = unref_ppn_mut::<M>(ppn);
             let vidx = M::vpn_index(vpn_start, level);
             match M::slot_try_get_entry(&mut page_table[vidx]) {
@@ -562,22 +568,27 @@ impl<M: PageMode, A: FrameAllocator + Clone> PagedAddrSpace<M, A> {
                 Err(mut slot) => {  // 需要一个内部页表，这里的页表项却没有数据，我们需要填写数据
                     let frame_box = FrameBox::try_new_in(self.frame_alloc.clone())?;
                     M::slot_set_child(&mut slot, frame_box.phys_page_num());
+                    ppn = frame_box.phys_page_num();
                     self.frames.push(frame_box);
                 }
             }
         }
+        println!("[kernel-alloc-map-test] in alloc_get_table PPN: {:x?}", ppn);
         let page_table = unref_ppn_mut::<M>(ppn); // 此时ppn是当前所需要修改的页表
         // 创建了一个没有约束的生命周期。不过我们可以判断它是合法的，因为它的所有者是Self，在Self的周期内都合法
         Ok(&mut *(page_table as *mut _))
     }
     pub fn allocate_map(&mut self, vpn: VirtPageNum, ppn: PhysPageNum, n: usize, flags: M::Flags) -> Result<(), FrameAllocError> {
         for (page_level, vpn_range) in MapPairs::solve(vpn, ppn, n, self.page_mode) {
+            println!("[kernel-alloc-map-test] PAGE LEVEL: {:?}, VPN RANGE: {:x?}", page_level, vpn_range);
             let table = unsafe { self.alloc_get_table(page_level, vpn_range.start) }?;
+            println!("[kernel-alloc-map-test] IDX RANGE: {:?}", M::vpn_index(vpn_range.start, page_level)..M::vpn_index(vpn_range.end, page_level));
             for vidx in M::vpn_index(vpn_range.start, page_level)..M::vpn_index(vpn_range.end, page_level) {
                 let this_ppn = PhysPageNum(ppn.0 + vpn_range.start.0 - vpn.0 + M::get_layout_for_level(page_level).frame_align() * vidx);
-                // println!("Vidx {} -> Ppn {:x?}", vidx, this_ppn);
+                // println!("", vidx, this_ppn);
+                println!("[kernel-alloc-map-test] Table: {:p} Vidx {} -> Ppn {:x?}", table, vidx, this_ppn);
                 match M::slot_try_get_entry(&mut table[vidx]) {
-                    Ok(_entry) => panic!("Already allocated"),
+                    Ok(_entry) => panic!("already allocated"),
                     Err(slot) => M::slot_set_mapping(slot, this_ppn, flags.clone())
                 }
             }
@@ -655,9 +666,11 @@ pub(crate) fn test_map_solve() {
 
 // 切换地址空间，同时需要提供1.地址空间的详细设置 2.地址空间编号
 // 不一定最后的API就是这样的，留个坑
-// pub fn activate_paged(addr_space: &PagedAddrSpace, asid: AddressSpaceId) {
-//     todo!()    
-// }
+pub unsafe fn activate_paged_riscv_sv39(root_ppn: PhysPageNum, asid: AddressSpaceId) {
+    use riscv::register::satp::{self, Mode};
+    satp::set(Mode::Sv39, asid.0 as usize, root_ppn.0);
+    asm!("sfence.vma {}", in(reg) asid.0 as usize);
+}
 
 // 自身映射地址空间；虚拟地址等于物理地址
 //
