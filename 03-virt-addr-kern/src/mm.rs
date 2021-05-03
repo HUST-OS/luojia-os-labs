@@ -366,7 +366,7 @@ pub trait PageMode: Copy {
     // 页式管理模式，可能有效也可能无效的页表项类型
     type Slot;
     // 解释页表项目；如果项目无效，返回None，可以直接操作slot写入其它数据
-    unsafe fn slot_try_get_entry(slot: &mut Self::Slot) -> Result<&mut Self::Entry, &mut Self::Slot>;
+    fn slot_try_get_entry(slot: &mut Self::Slot) -> Result<&mut Self::Entry, &mut Self::Slot>;
     // 创建页表时，把它的所有条目设置为无效条目
     unsafe fn init_page_table(table: &mut Self::PageTable);
     // 页表项的设置
@@ -433,8 +433,9 @@ impl PageMode for Sv39 {
     }
     type Entry = Sv39PageEntry;
     type Slot = Sv39PageSlot;
-    unsafe fn slot_try_get_entry(slot: &mut Sv39PageSlot) -> Result<&mut Sv39PageEntry, &mut Sv39PageSlot> {
-        let ans = &mut *(slot as *mut _ as *mut Sv39PageEntry);
+    fn slot_try_get_entry(slot: &mut Sv39PageSlot) -> Result<&mut Sv39PageEntry, &mut Sv39PageSlot> {
+        // note(unsafe): slot是合法的
+        let ans = unsafe { &mut *(slot as *mut _ as *mut Sv39PageEntry) };
         if ans.flags().contains(Sv39Flags::V) {
             Ok(ans)
         } else {
@@ -577,7 +578,7 @@ impl<M: PageMode, A: FrameAllocator + Clone> PagedAddrSpace<M, A> {
             for vidx in M::vpn_index(vpn_range.start, page_level)..M::vpn_index(vpn_range.end, page_level) {
                 let this_ppn = PhysPageNum(ppn.0 + vpn_range.start.0 - vpn.0 + M::get_layout_for_level(page_level).frame_align() * vidx);
                 // println!("Vidx {} -> Ppn {:x?}", vidx, this_ppn);
-                match unsafe { M::slot_try_get_entry(&mut table[vidx]) } {
+                match M::slot_try_get_entry(&mut table[vidx]) {
                     Ok(_entry) => panic!("Already allocated"),
                     Err(slot) => M::slot_set_mapping(slot, this_ppn, flags.clone())
                 }
