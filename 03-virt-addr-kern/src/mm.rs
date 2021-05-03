@@ -31,13 +31,6 @@ pub(crate) fn heap_init() {
     println!("[kernel] Alloc test: {:?}", vec);
 }
 
-const PAGE_SIZE_BITS: usize = 12; // on RISC-V RV64, 4KB
-const PAGE_SIZE: usize = 1 << PAGE_SIZE_BITS;
-const PADDR_SPACE_BITS: usize = 56;
-const PPN_VALID_MASK: usize = (1 << (PADDR_SPACE_BITS - PAGE_SIZE_BITS)) - 1;
-// const VADDR_SPACE_BITS: usize = 39;
-// const VPN_VALID_MASK: usize = (1 << (VADDR_SPACE_BITS - PAGE_SIZE_BITS)) - 1;
-
 #[derive(Copy, Clone, PartialEq, Eq, Debug)]
 pub struct PhysAddr(pub usize);
 
@@ -66,11 +59,12 @@ impl VirtAddr {
 pub struct PhysPageNum(usize);
 
 impl PhysPageNum {
-    pub fn addr_begin(&self) -> PhysAddr {
-        PhysAddr(self.0 << PAGE_SIZE_BITS)
+    pub fn addr_begin<M: PageMode>(&self) -> PhysAddr {
+        PhysAddr(self.0 << M::PAGE_SIZE_BITS)
     }
     pub fn next_page(&self) -> PhysPageNum {
-        PhysPageNum(self.0.wrapping_add(1) & PPN_VALID_MASK)
+        // PhysPageNum(self.0.wrapping_add(1) & ((1 << M::PPN_BITS) - 1))
+        PhysPageNum(self.0.wrapping_add(1))
     }
     pub fn is_within_range(&self, begin: PhysPageNum, end: PhysPageNum) -> bool {
         if begin.0 <= end.0 {
@@ -352,6 +346,7 @@ pub struct Sv39;
 // 如果虚拟内存的模式是直接映射或者线性映射，这将不属于分页模式的范围。应当混合使用其它的地址空间，综合成为更大的地址空间。
 pub trait PageMode: Copy {
     const PAGE_SIZE_BITS: usize;
+    const PPN_BITS: usize;
     // 得到这一层大页物理地址最低的对齐要求
     fn get_layout_for_level(level: PageLevel) -> FrameLayout;
     // 得到从高到低的页表等级
@@ -393,7 +388,7 @@ impl PageLevel {
 
 impl PageMode for Sv39 {
     const PAGE_SIZE_BITS: usize = 12;
-    
+    const PPN_BITS: usize = 44;
     fn get_layout_for_level(level: PageLevel) -> FrameLayout {
         unsafe { match level.0 {
             0 => FrameLayout::new_unchecked(1), // 4K页，最低层页
@@ -515,13 +510,13 @@ bitflags::bitflags! {
     }
 }
 
-#[inline] unsafe fn unref_ppn_mut<'a>(ppn: PhysPageNum) -> &'a mut PageTable {
-    let pa = ppn.addr_begin();
+#[inline] unsafe fn unref_ppn_mut<'a, M: PageMode>(ppn: PhysPageNum) -> &'a mut PageTable {
+    let pa = ppn.addr_begin::<M>();
     &mut *(pa.0 as *mut PageTable)
 }
 
 #[inline] unsafe fn fill_frame_with_all_invalid_page_table<A: FrameAllocator, M: PageMode>(b: &mut FrameBox<A>) {
-    let a = &mut *(b.ppn.addr_begin().0 as *mut PageTable);
+    let a = &mut *(b.ppn.addr_begin::<M>().0 as *mut PageTable);
     M::fill_page_table_invalid(a);
 }
 
@@ -530,7 +525,7 @@ impl<M: PageMode, A: FrameAllocator + Clone> PagedAddrSpace<M, A> {
     unsafe fn alloc_get_table(&mut self, entry_level: PageLevel, vpn_start: VirtPageNum) -> Result<&mut PageTable, FrameAllocError> {
         let mut ppn = self.root_frame.phys_page_num();
         for &level in M::visit_levels_before(entry_level) {
-            let page_table = unref_ppn_mut(ppn);
+            let page_table = unref_ppn_mut::<M>(ppn);
             let vidx = M::vpn_index(vpn_start, level);
             match M::convert_entry_mut(&mut page_table.entries[vidx]) {
                 Ok(entry) => ppn = M::get_ppn_from_entry(entry),
@@ -541,7 +536,7 @@ impl<M: PageMode, A: FrameAllocator + Clone> PagedAddrSpace<M, A> {
                 }
             }
         }
-        let page_table = unref_ppn_mut(ppn); // 此时ppn是当前所需要修改的页表
+        let page_table = unref_ppn_mut::<M>(ppn); // 此时ppn是当前所需要修改的页表
         // 创建了一个没有约束的生命周期。不过我们可以判断它是合法的，因为它的所有者是Self，在Self的周期内都合法
         Ok(&mut *(page_table as *mut _))
     }
@@ -614,7 +609,7 @@ impl<M> Iterator for MapPairs<M> {
 
 #[repr(C)]
 pub struct PageTable {
-    entries: [PageTableEntry; PAGE_SIZE / core::mem::size_of::<PageTableEntry>()],
+    entries: [PageTableEntry; 512], // todo: other modes
 }
 
 #[repr(C)]
