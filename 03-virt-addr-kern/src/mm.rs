@@ -438,3 +438,25 @@ bitflags::bitflags! {
 //
 // 启动这种映射，不需要激活地址空间。
 // pub fn activate_identical() { todo!() }
+
+// // 
+// // input: v: VirtPageNum, p: PhysPageNum, n: usize, a: PageMode;
+// if (v - p) % (a[2].frame_align()) == 0 && n >= a[2].frame_align() {
+//     let l2n = (vs2 - ve2) / a[2].frame_align();
+//     map(2, ve2, vs2, ve2-v+p);
+//     let l1n = (ve2 - ve1 + vs1 - vs2) / a[1].frame_align();
+//     map(1, ve1, ve2, ve1-v+p); map(1, vs2, vs1, vs2-v+p);
+//     let l0n = (n + ve1 - vs1) / a[0].frame_align();
+//     map(0, v, ve1, p); map(0, vs1, v+n, vs1-v+p);
+// } else if (v - p) % (a[1].frame_align()) == 0 && n >= a[1].frame_align() {
+//     let l1n = (vs1 - ve1) / a[1].frame_align();
+//     map(1, ve1, vs1, ve1-v+p);
+//     let l0n = (n + ve1 - vs1) / a[0].frame_align();
+//     map(0, v, ve1, p); map(0, vs1, v+n, vs1-v+p);
+// } else if (v - p) % (a[0].frame_align()) == 0 && n >= a[0].frame_align() {
+//     let l0n = n / a[0].frame_align();
+//     map(0, v, v+n, p);
+// } else {
+//     panic!("Can't map v to p under this page mode")
+// }
+
