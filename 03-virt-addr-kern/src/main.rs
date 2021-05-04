@@ -32,10 +32,10 @@ pub extern "C" fn rust_main(hartid: usize, dtb_pa: usize) -> ! {
     let from = mm::PhysAddr(0x80420000).page_number::<mm::Sv39>();
     let to = mm::PhysAddr(0x80800000).page_number::<mm::Sv39>(); // 暂时对qemu写死
     let frame_alloc = spin::Mutex::new(mm::StackFrameAllocator::new(from, to));
-    println!("[kernel-frame] Frame allocator: {:x?}", frame_alloc);
+    // println!("[kernel-frame] Frame allocator: {:x?}", frame_alloc);
     let mut kernel_addr_space = mm::PagedAddrSpace::try_new_in(mm::Sv39, &frame_alloc)
         .expect("allocate page to create kernel paged address space");
-    println!("[kernel] Kernel address space: {:x?}", kernel_addr_space);
+    // println!("[kernel] Kernel address space: {:x?}", kernel_addr_space);
     mm::test_map_solve();
     kernel_addr_space.allocate_map(
         mm::VirtAddr(0x80000000).page_number::<mm::Sv39>(), 
@@ -49,29 +49,32 @@ pub extern "C" fn rust_main(hartid: usize, dtb_pa: usize) -> ! {
         32,
         mm::Sv39Flags::R | mm::Sv39Flags::W | mm::Sv39Flags::X | mm::Sv39Flags::U
     ).expect("allocate one mapped space");
-    kernel_addr_space.allocate_map(
-        mm::VirtAddr(0x80420000).page_number::<mm::Sv39>(), 
-        mm::PhysAddr(0x80420000).page_number::<mm::Sv39>(), 
-        992,
-        mm::Sv39Flags::R | mm::Sv39Flags::W | mm::Sv39Flags::X
-    ).expect("allocate one mapped space");
-    println!("[kernel] Kernel address space: {:x?}", kernel_addr_space);
+    // println!("[kernel] Kernel address space: {:x?}", kernel_addr_space);
     mm::test_asid_alloc();
     let max_asid = mm::max_asid();
     let mut asid_alloc = mm::StackAsidAllocator::new(max_asid);
-    println!("[kernel-asid] Asid allocator: {:x?}", asid_alloc);
+    // println!("[kernel-asid] Asid allocator: {:x?}", asid_alloc);
     let kernel_asid = asid_alloc.allocate_asid().expect("alloc kernel asid");
+    use crate::mm::FrameAllocator;
+    let user_stack_ppn = frame_alloc.allocate_frame().expect("Alloc user stack");
+    println!("User stack ppn: {:?}", user_stack_ppn);
+    kernel_addr_space.allocate_map(
+        mm::VirtAddr(user_stack_ppn.addr_begin::<mm::Sv39>().0).page_number::<mm::Sv39>(), 
+        user_stack_ppn, 
+        1,
+        mm::Sv39Flags::R | mm::Sv39Flags::W | mm::Sv39Flags::X | mm::Sv39Flags::U
+    ).expect("allocate one mapped space");
     unsafe {
         mm::activate_paged_riscv_sv39(kernel_addr_space.root_page_number(), kernel_asid);
     }
     unsafe { riscv::register::sstatus::set_sum() };
     executor::init();
-    execute();
+    execute(user_stack_ppn.addr_begin::<mm::Sv39>().0 + 0x1000);
 }
 
-fn execute() -> ! {
+fn execute(user_stack: usize) -> ! {
     app::APP_MANAGER.print_app_info();
-    let mut rt = executor::Runtime::new_user(app::APP_MANAGER.prepare_next_app());
+    let mut rt = executor::Runtime::new_user(app::APP_MANAGER.prepare_next_app(), user_stack);
     loop {
         match Pin::new(&mut rt).resume(()) {
             GeneratorState::Yielded(KernelTrap::Syscall()) => {

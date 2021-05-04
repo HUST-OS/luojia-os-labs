@@ -7,7 +7,6 @@ use core::{
     pin::Pin,
     ops::{Generator, GeneratorState},
 };
-const USER_STACK_SIZE: usize = 4096 * 2;
 
 pub fn init() {
     let mut addr = crate::executor::from_user_save as usize;
@@ -20,25 +19,19 @@ pub fn init() {
 #[repr(C)]
 pub struct Runtime {
     context: UserContext, 
+    user_stack: usize, // 这里应该给所有权。暂时只给一页的栈（太抠了)
 }
 
-#[repr(align(4))] // 防止非对齐访问
-struct UserStack([u8; USER_STACK_SIZE]);
-// todo: 分配用户栈
-
-static mut USER_STACK: UserStack = UserStack([0; USER_STACK_SIZE]);
-
 impl Runtime {
-    pub fn new_user(first_app_sepc: usize) -> Self {
+    pub fn new_user(first_app_sepc: usize, user_stack: usize) -> Self {
         let context: UserContext = unsafe { core::mem::MaybeUninit::zeroed().assume_init() };
-        let mut ans = Runtime { context };
+        let mut ans = Runtime { context, user_stack };
         ans.prepare_next_app(first_app_sepc);
         ans
     }
 
     fn reset(&mut self) {
-        let stack_start = unsafe { (&mut USER_STACK as *mut _ as *mut u8).offset(USER_STACK_SIZE as isize) };
-        self.context.sp = stack_start as usize;
+        self.context.sp = self.user_stack;
         unsafe { sstatus::set_spp(SPP::User) };
         self.context.sstatus = sstatus::read();
         self.context.kernel_stack = 0x233333666666; // 将会被resume函数覆盖

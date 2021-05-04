@@ -558,7 +558,7 @@ impl<M: PageMode, A: FrameAllocator + Clone> PagedAddrSpace<M, A> {
     pub fn try_new_in(page_mode: M, frame_alloc: A) -> Result<Self, FrameAllocError> {
         // 新建一个满足根页表对齐要求的帧；虽然代码没有体现，通常对齐要求是1
         let mut root_frame = FrameBox::try_new_in(frame_alloc.clone())?;
-        println!("[kernel-alloc-map-test] Root frame: {:x?}", root_frame.phys_page_num());
+        // println!("[kernel-alloc-map-test] Root frame: {:x?}", root_frame.phys_page_num());
         // 向帧里填入一个空的根页表 
         unsafe { fill_frame_with_initialized_page_table::<A, M>(&mut root_frame) };
         Ok(Self { root_frame, frames: Vec::new(), frame_alloc, page_mode })
@@ -584,7 +584,7 @@ impl<M: PageMode, A: FrameAllocator + Clone> PagedAddrSpace<M, A> {
     unsafe fn alloc_get_table(&mut self, entry_level: PageLevel, vpn_start: VirtPageNum) -> Result<&mut M::PageTable, FrameAllocError> {
         let mut ppn = self.root_frame.phys_page_num();
         for &level in M::visit_levels_before(entry_level) {
-            println!("[] BEFORE PPN = {:x?}", ppn);
+            // println!("[] BEFORE PPN = {:x?}", ppn);
             let page_table = unref_ppn_mut::<M>(ppn);
             let vidx = M::vpn_index(vpn_start, level);
             match M::slot_try_get_entry(&mut page_table[vidx]) {
@@ -592,23 +592,23 @@ impl<M: PageMode, A: FrameAllocator + Clone> PagedAddrSpace<M, A> {
                 Err(mut slot) => {  // 需要一个内部页表，这里的页表项却没有数据，我们需要填写数据
                     let frame_box = FrameBox::try_new_in(self.frame_alloc.clone())?;
                     M::slot_set_child(&mut slot, frame_box.phys_page_num());
-                    println!("[] Created a new frame box");
+                    // println!("[] Created a new frame box");
                     ppn = frame_box.phys_page_num();
                     self.frames.push(frame_box);
                 }
             }
         }
-        println!("[kernel-alloc-map-test] in alloc_get_table PPN: {:x?}", ppn);
+        // println!("[kernel-alloc-map-test] in alloc_get_table PPN: {:x?}", ppn);
         let page_table = unref_ppn_mut::<M>(ppn); // 此时ppn是当前所需要修改的页表
         // 创建了一个没有约束的生命周期。不过我们可以判断它是合法的，因为它的所有者是Self，在Self的周期内都合法
         Ok(&mut *(page_table as *mut _))
     }
     pub fn allocate_map(&mut self, vpn: VirtPageNum, ppn: PhysPageNum, n: usize, flags: M::Flags) -> Result<(), FrameAllocError> {
         for (page_level, vpn_range) in MapPairs::solve(vpn, ppn, n, self.page_mode) {
-            println!("[kernel-alloc-map-test] PAGE LEVEL: {:?}, VPN RANGE: {:x?}", page_level, vpn_range);
+            // println!("[kernel-alloc-map-test] PAGE LEVEL: {:?}, VPN RANGE: {:x?}", page_level, vpn_range);
             let table = unsafe { self.alloc_get_table(page_level, vpn_range.start) }?;
             let idx_range = M::vpn_index_range(vpn_range.clone(), page_level);
-            println!("[kernel-alloc-map-test] IDX RANGE: {:?}", idx_range);
+            // println!("[kernel-alloc-map-test] IDX RANGE: {:?}", idx_range);
             for vidx in idx_range {
                 let this_ppn = PhysPageNum(ppn.0 - vpn.0 + M::vpn_level_index(vpn_range.start, page_level, vidx).0);
                 // println!("[kernel-alloc-map-test] Table: {:p} Vidx {} -> Ppn {:x?}", table, vidx, this_ppn);
@@ -660,7 +660,7 @@ impl<M: PageMode> MapPairs<M> {
             }
             break;
         } 
-        println!("[SOLVE] Ans = {:x?}", ans);
+        // println!("[SOLVE] Ans = {:x?}", ans);
         Self { ans_iter: ans.into_iter(), mode }
     }
 }
