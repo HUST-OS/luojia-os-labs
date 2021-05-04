@@ -351,8 +351,10 @@ pub trait PageMode: Copy {
     fn visit_levels_before(level: PageLevel) -> &'static [PageLevel];
     // 得到从高到低的页表等级
     fn visit_levels_from(level: PageLevel) -> &'static [PageLevel];
-    // 得到一个虚拟页号各个等级的索引，从高到低
+    // 得到一个虚拟页号对应等级的索引
     fn vpn_index(vpn: VirtPageNum, level: PageLevel) -> usize;
+    // 得到一段虚拟页号对应该等级索引的区间；如果超过此段最大的索引，返回索引的结束值为索引的最大值
+    fn vpn_index_range(vpn_range: Range<VirtPageNum>, level: PageLevel) -> Range<usize>;
     // 得到虚拟页号在当前等级下重新索引得到的页号
     fn vpn_level_index(vpn: VirtPageNum, level: PageLevel, idx: usize) -> VirtPageNum;
     // 当前分页模式下，页表的类型
@@ -430,6 +432,18 @@ impl PageMode for Sv39 {
     }
     fn vpn_index(vpn: VirtPageNum, level: PageLevel) -> usize {
         (vpn.0 >> (level.0 * 9)) & 511
+    }
+    fn vpn_index_range(vpn_range: Range<VirtPageNum>, level: PageLevel) -> Range<usize> {
+        let start = (vpn_range.start.0 >> (level.0 * 9)) & 511;
+        let mut end = (vpn_range.end.0 >> (level.0 * 9)) & 511;
+        if level.0 <= 1 {
+            let start_idx1 = vpn_range.start.0 >> ((level.0 + 1) * 9);
+            let end_idx1 = vpn_range.end.0 >> ((level.0 + 1) * 9);
+            if end_idx1 > start_idx1 {
+                end = 512;
+            }
+        }
+        start..end
     }
     fn vpn_level_index(vpn: VirtPageNum, level: PageLevel, idx: usize) -> VirtPageNum {
         VirtPageNum(match level.0 {
@@ -593,10 +607,11 @@ impl<M: PageMode, A: FrameAllocator + Clone> PagedAddrSpace<M, A> {
         for (page_level, vpn_range) in MapPairs::solve(vpn, ppn, n, self.page_mode) {
             println!("[kernel-alloc-map-test] PAGE LEVEL: {:?}, VPN RANGE: {:x?}", page_level, vpn_range);
             let table = unsafe { self.alloc_get_table(page_level, vpn_range.start) }?;
-            println!("[kernel-alloc-map-test] IDX RANGE: {:?}", M::vpn_index(vpn_range.start, page_level)..M::vpn_index(vpn_range.end, page_level));
-            for vidx in M::vpn_index(vpn_range.start, page_level)..M::vpn_index(vpn_range.end, page_level) {
+            let idx_range = M::vpn_index_range(vpn_range.clone(), page_level);
+            println!("[kernel-alloc-map-test] IDX RANGE: {:?}", idx_range);
+            for vidx in idx_range {
                 let this_ppn = PhysPageNum(ppn.0 - vpn.0 + M::vpn_level_index(vpn_range.start, page_level, vidx).0);
-                println!("[kernel-alloc-map-test] Table: {:p} Vidx {} -> Ppn {:x?}", table, vidx, this_ppn);
+                // println!("[kernel-alloc-map-test] Table: {:p} Vidx {} -> Ppn {:x?}", table, vidx, this_ppn);
                 match M::slot_try_get_entry(&mut table[vidx]) {
                     Ok(_entry) => panic!("already allocated"),
                     Err(slot) => M::slot_set_mapping(slot, this_ppn, flags.clone())

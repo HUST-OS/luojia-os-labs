@@ -40,7 +40,19 @@ pub extern "C" fn rust_main(hartid: usize, dtb_pa: usize) -> ! {
     kernel_addr_space.allocate_map(
         mm::VirtAddr(0x80000000).page_number::<mm::Sv39>(), 
         mm::PhysAddr(0x80000000).page_number::<mm::Sv39>(), 
-        2048,
+        1024,
+        mm::Sv39Flags::R | mm::Sv39Flags::W | mm::Sv39Flags::X
+    ).expect("allocate one mapped space");
+    kernel_addr_space.allocate_map(
+        mm::VirtAddr(0x80400000).page_number::<mm::Sv39>(), 
+        mm::PhysAddr(0x80400000).page_number::<mm::Sv39>(), 
+        32,
+        mm::Sv39Flags::R | mm::Sv39Flags::W | mm::Sv39Flags::X | mm::Sv39Flags::U
+    ).expect("allocate one mapped space");
+    kernel_addr_space.allocate_map(
+        mm::VirtAddr(0x80420000).page_number::<mm::Sv39>(), 
+        mm::PhysAddr(0x80420000).page_number::<mm::Sv39>(), 
+        992,
         mm::Sv39Flags::R | mm::Sv39Flags::W | mm::Sv39Flags::X
     ).expect("allocate one mapped space");
     println!("[kernel] Kernel address space: {:x?}", kernel_addr_space);
@@ -52,6 +64,7 @@ pub extern "C" fn rust_main(hartid: usize, dtb_pa: usize) -> ! {
     unsafe {
         mm::activate_paged_riscv_sv39(kernel_addr_space.root_page_number(), kernel_asid);
     }
+    unsafe { riscv::register::sstatus::set_sum() };
     executor::init();
     execute();
 }

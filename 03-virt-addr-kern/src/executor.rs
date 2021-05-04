@@ -24,6 +24,7 @@ pub struct Runtime {
 
 #[repr(align(4))] // 防止非对齐访问
 struct UserStack([u8; USER_STACK_SIZE]);
+// todo: 分配用户栈
 
 static mut USER_STACK: UserStack = UserStack([0; USER_STACK_SIZE]);
 
@@ -65,7 +66,7 @@ impl Generator for Runtime {
             Trap::Exception(Exception::LoadFault) => KernelTrap::LoadAccessFault(stval),
             Trap::Exception(Exception::StoreFault) => KernelTrap::StoreAccessFault(stval),
             Trap::Exception(Exception::IllegalInstruction) => KernelTrap::IllegalInstruction(stval),
-            e => panic!("unhandled exception: {:?}! stval: {:#x?}", e, stval)
+            e => panic!("unhandled exception: {:?}! stval: {:#x?}, ctx: {:#x?}", e, stval, self.context)
         };
         GeneratorState::Yielded(trap)
     }
