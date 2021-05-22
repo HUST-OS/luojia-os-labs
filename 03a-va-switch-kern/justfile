@@ -1,0 +1,49 @@
+target := "riscv64imac-unknown-none-elf"
+mode := "debug"
+build-path := "../target/" + target + "/" + mode + "/"
+bootloader-bin := "../../rustsbi/target/" + target + "/debug/rustsbi-qemu.bin"
+kernel-elf := build-path + "va-switch-kern"
+kernel-bin := build-path + "va-switch-kern.bin"
+
+threads := "1"
+
+objdump := "riscv64-unknown-elf-objdump"
+objcopy := "rust-objcopy --binary-architecture=riscv64"
+size := "rust-size"
+gdb := "riscv64-unknown-elf-gdb"
+
+build: kernel
+    @{{objcopy}} {{kernel-elf}} --strip-all -O binary {{kernel-bin}}
+
+kernel:
+    @cargo build --target={{target}}
+
+asm: build
+    @{{objdump}} -D {{kernel-elf}} | less
+
+size: build
+    @{{size}} -A -x {{kernel-elf}} 
+
+run: build qemu
+
+qemu: build
+    @qemu-system-riscv64 \
+            -machine virt \
+            -nographic \
+            -bios none \
+            -device loader,file={{bootloader-bin}},addr=0x80000000 \
+            -device loader,file={{kernel-bin}},addr=0x80200000 \
+            -smp threads={{threads}}
+
+debug: build
+    @qemu-system-riscv64 \
+            -machine virt \
+            -nographic \
+            -bios none \
+            -device loader,file={{bootloader-bin}},addr=0x80000000 \
+            -device loader,file={{kernel-bin}},addr=0x80200000 \
+            -gdb tcp::1234 -S \
+            -smp threads={{threads}}
+
+gdb: 
+    @{{gdb}} --eval-command="file {{kernel-elf}}" --eval-command="target remote localhost:1234"

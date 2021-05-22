@@ -14,6 +14,7 @@ members = [
     "02b-trap-return-kern/kernel",
     "02b-trap-return-kern/user",
     "03-virt-addr-kern",
+    "03a-va-switch-kern",
     "03-mmu-users",
 ]
 
